@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field
 
 # --- Taxonomy axes ---------------------------------------------------------
 # Four orthogonal axes derived from the unified taxonomy (see taxonomy.py).
@@ -70,7 +70,7 @@ class Framework(BaseModel):
     slug: str = Field(..., description="Short ID, e.g. 'langchain', used in URLs and filenames")
     repo: str = Field(..., description="GitHub owner/repo, e.g. 'langchain-ai/langchain'")
     display_name: str
-    homepage: HttpUrl | None = None
+    homepage: str | None = None
 
 
 class RawIssue(BaseModel):
@@ -90,7 +90,7 @@ class RawIssue(BaseModel):
     # Content (verbatim at scrape time)
     title: str
     body: str | None = None
-    url: HttpUrl
+    url: str
     labels: tuple[str, ...] = ()
 
     # State
@@ -139,7 +139,7 @@ class ClassifiedIssue(BaseModel):
     node_id: str
     title: str
     body: str | None
-    url: HttpUrl
+    url: str
     labels: tuple[str, ...]
     state: Literal["open", "closed"]
     is_pull_request: bool

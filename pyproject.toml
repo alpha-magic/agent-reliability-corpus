@@ -50,7 +50,13 @@ ignore = ["E501"]  # line length handled by formatter
 [tool.pyright]
 include = ["src", "tests"]
 pythonVersion = "3.12"
-typeCheckingMode = "strict"
+# Point pyright at the project venv so third-party imports resolve.
+venvPath = "."
+venv = ".venv"
+# "standard" catches real bugs (wrong types, missing attrs) without flooding
+# on "unknown type" noise from libs without complete type stubs (structlog,
+# datasets). Strict is an aspiration — revisit once the ecosystem catches up.
+typeCheckingMode = "standard"
 reportMissingTypeStubs = false
 
 [tool.pytest.ini_options]

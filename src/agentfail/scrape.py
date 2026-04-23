@@ -135,7 +135,7 @@ class GitHubClient:
         we filter PRs out in `scrape_framework`.
         """
         url = f"{GITHUB_API}/repos/{repo}/issues"
-        params: dict[str, Any] = {
+        params: dict[str, Any] | None = {
             "state": state,
             "per_page": PAGE_SIZE,
             "sort": "updated",

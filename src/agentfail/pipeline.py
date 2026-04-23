@@ -32,7 +32,7 @@ from agentfail.publish import (
     push_to_hub,
     write_local_snapshot,
 )
-from agentfail.schema import ClassifiedIssue, CrossLink
+from agentfail.schema import ClassifiedIssue, CrossLink, RawIssue
 from agentfail.scrape import GitHubClient, scrape_all
 
 log = structlog.get_logger(__name__)
@@ -173,7 +173,7 @@ def run(
     return snapshot_dir
 
 
-def _dry_run_classify(issue) -> ClassifiedIssue:  # type: ignore[no-untyped-def]
+def _dry_run_classify(issue: RawIssue) -> ClassifiedIssue:
     """Emit a deterministic placeholder classification (for smoke/e2e tests)."""
     from agentfail import __version__
     from agentfail.schema import Classification

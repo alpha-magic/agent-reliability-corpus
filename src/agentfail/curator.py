@@ -202,13 +202,21 @@ def build_curator_agent() -> Agent[CuratorDeps, CuratorDecision]:
             }
 
         sample = df.sample(n=min(sample_size, len(df)), seed=42)
+
+        # Polars' .mean() returns a broad union type because the column dtype
+        # isn't known at compile time. We know confidence is Float64 and
+        # needs_review is Bool, both of which coerce cleanly to float.
+        def _mean_as_float(col: str) -> float:
+            v = sample[col].mean()
+            return float(v) if isinstance(v, (int, float)) else 0.0
+
         return {
             "revision": latest.name,
             "sample_size": len(sample),
             "locus_dist": sample["locus"].value_counts().to_dicts(),
             "symptom_dist": sample["symptom"].value_counts().to_dicts(),
-            "mean_confidence": float(sample["confidence"].mean() or 0.0),
-            "needs_review_rate": float(sample["needs_review"].mean() or 0.0),
+            "mean_confidence": _mean_as_float("confidence"),
+            "needs_review_rate": _mean_as_float("needs_review"),
         }
 
     # --- Tool: summarize growth since a date -----------------------------
