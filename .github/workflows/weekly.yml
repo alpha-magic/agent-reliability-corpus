@@ -1,0 +1,70 @@
+name: weekly-pipeline
+
+on:
+  schedule:
+    # Mondays 07:00 UTC — after weekend issue churn, before the workweek starts.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+    inputs:
+      max_per_framework:
+        description: "Cap issues per framework (leave blank for no cap)"
+        required: false
+        default: ""
+      push:
+        description: "Push snapshot to HF Hub"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write  # to commit the state file back to the repo
+
+jobs:
+  run:
+    name: scrape-classify-publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need full history to commit state updates
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: sync dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install -e .
+
+      - name: run pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HF_REPO_ID: ${{ vars.HF_REPO_ID }}
+          MAX_PER_FRAMEWORK: ${{ inputs.max_per_framework }}
+          PUSH_TO_HUB: ${{ inputs.push == '' && 'true' || inputs.push }}
+        run: |
+          args=(--output-dir data/snapshots --state-path data/pipeline_state.json)
+          if [ -n "${MAX_PER_FRAMEWORK}" ]; then
+            args+=(--max-per-framework "${MAX_PER_FRAMEWORK}")
+          fi
+          if [ "${PUSH_TO_HUB}" = "true" ]; then
+            args+=(--push --hf-repo-id "${HF_REPO_ID}")
+          fi
+          uv run agentfail-pipeline "${args[@]}"
+
+      - name: commit updated state
+        run: |
+          git config user.name "agentfail-bot"
+          git config user.email "bot@agentfail.local"
+          git add data/pipeline_state.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update pipeline state ($(date -u +%Y-%m-%d))"
+            git push
+          else
+            echo "no state changes to commit"
+          fi

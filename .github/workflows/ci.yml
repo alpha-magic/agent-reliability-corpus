@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: lint + type + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: pyproject.toml
+
+      - name: sync dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[dev]"
+
+      - name: ruff lint
+        run: uv run ruff check src tests
+
+      - name: ruff format check
+        run: uv run ruff format --check src tests
+
+      - name: pyright
+        run: uv run pyright src
+
+      - name: pytest
+        run: uv run pytest -q
