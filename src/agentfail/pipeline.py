@@ -98,7 +98,7 @@ def run(
         output_dir: Where to write Parquet snapshots. Created if missing.
         state_path: JSON file holding per-framework last-scraped timestamps.
         push: If True, push the snapshot to HF Hub. Requires HF_TOKEN.
-        hf_repo_id: Target HF dataset repo (e.g. "user/agentfail").
+        hf_repo_id: Target HF dataset repo (e.g. "user/agent-reliability-corpus").
         max_per_framework: If set, cap issues scraped per framework. Useful
             for smoke tests; None means no cap.
         dry_run_classifier: If True, skip the LLM classifier entirely and
@@ -201,7 +201,9 @@ def _dry_run_classify(issue: RawIssue) -> ClassifiedIssue:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the agentfail weekly pipeline (Agent A).")
+    parser = argparse.ArgumentParser(
+        description="Run the Agent Reliability Corpus weekly pipeline (Agent A)."
+    )
     parser.add_argument(
         "--output-dir",
         type=Path,
@@ -222,7 +224,7 @@ def main() -> None:
     parser.add_argument(
         "--hf-repo-id",
         default=None,
-        help="HF dataset repo ID, e.g. 'username/agentfail'.",
+        help="HF dataset repo ID, e.g. 'username/agent-reliability-corpus'.",
     )
     parser.add_argument(
         "--max-per-framework",

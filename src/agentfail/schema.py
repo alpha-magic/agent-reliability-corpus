@@ -1,4 +1,4 @@
-"""Typed data boundaries for the agentfail corpus.
+"""Typed data boundaries for the Agent Reliability Corpus.
 
 Every IO surface uses these models. They also double as the column schema
 for the published HF dataset — keep field names stable across releases
@@ -162,7 +162,9 @@ class ClassifiedIssue(BaseModel):
     classifier_model: str = Field(
         ..., description="Pinned model ID, e.g. 'claude-haiku-4-5-20251001'"
     )
-    classifier_version: str = Field(..., description="agentfail release that produced this label")
+    classifier_version: str = Field(
+        ..., description="Agent Reliability Corpus release that produced this label"
+    )
     classified_at: datetime
 
     @classmethod

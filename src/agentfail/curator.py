@@ -57,7 +57,7 @@ class CuratorDeps:
     """
 
     snapshot_dir: Path  # where pipeline snapshots live
-    dataset_repo_id: str | None = None  # e.g. "user/agentfail"; None in tests
+    dataset_repo_id: str | None = None  # e.g. "user/agent-reliability-corpus"; None in tests
 
 
 # --- Structured outputs -------------------------------------------------
@@ -109,8 +109,8 @@ class CuratorDecision(BaseModel):
 # --- The agent ----------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are the agentfail curator. Your job is to maintain the quality and
-evolution of the agentfail dataset without shipping any change that a
+You are the Agent Reliability Corpus curator. Your job is to maintain the
+quality and evolution of the dataset without shipping any change that a
 human hasn't approved.
 
 You have tools to:

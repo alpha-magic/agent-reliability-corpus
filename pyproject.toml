@@ -1,11 +1,11 @@
 [project]
-name = "agentfail"
+name = "agent-reliability-corpus"
 version = "0.1.0"
-description = "Unified corpus of agent framework failures, continuously mined and classified against a cross-linked academic taxonomy."
+description = "Continuously-mined, cross-linked corpus of agent framework failures, classified against a unified academic taxonomy."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
-authors = [{ name = "agentfail maintainers" }]
+authors = [{ name = "Agent Reliability Corpus contributors" }]
 dependencies = [
     "anthropic>=0.40.0",
     "pydantic>=2.9.0",
@@ -29,8 +29,8 @@ dev = [
 ]
 
 [project.scripts]
-agentfail-pipeline = "agentfail.pipeline:main"
-agentfail-curator = "agentfail.curator:main"
+arc-pipeline = "agentfail.pipeline:main"
+arc-curator = "agentfail.curator:main"
 
 [build-system]
 requires = ["hatchling"]

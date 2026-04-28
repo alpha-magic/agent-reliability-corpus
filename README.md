@@ -1,17 +1,18 @@
-# agentfail
+# Agent Reliability Corpus
 
 **A continuously-mined, cross-linked corpus of agent-framework failures.**
 
-`agentfail` scrapes issues from the major LLM-agent framework repositories,
-classifies each against a unified 4-axis failure taxonomy derived from the
-academic literature, and publishes a versioned dataset to the Hugging Face
-Hub every week. Each weekly snapshot is reproducible by revision.
+`agent-reliability-corpus` scrapes issues from the major LLM-agent framework
+repositories, classifies each against a unified 4-axis failure taxonomy
+derived from the academic literature, and publishes a versioned dataset to
+the Hugging Face Hub every week. Each weekly snapshot is reproducible by
+revision.
 
 The project bundles two agents:
 
-- **Agent A — pipeline** (`agentfail.pipeline`): stateless weekly job that
+- **Agent A — pipeline** (`arc-pipeline`): stateless weekly job that
   runs `scrape → classify → cross-link → publish`.
-- **Agent B — curator** (`agentfail.curator`): Pydantic-AI stateful agent
+- **Agent B — curator** (`arc-curator`): Pydantic-AI stateful agent
   that proposes new frameworks, audits classification drift, and tracks
   paper-worthy changes.
 
@@ -22,9 +23,10 @@ published in the last year (MAST, AgentFail, Agent Error Benchmark,
 Characterizing Faults in Agentic AI, the 998-bug Framework Bugs study),
 each on its own static snapshot, with no shared schema or cross-linking.
 Researchers writing on agent reliability rebuild a partial corpus every
-time. `agentfail` exists to be the canonical, continuously-updated
-aggregation — grounded in real GitHub issues, classified against a unified
-taxonomy, and cross-linked to the existing academic records.
+time. The Agent Reliability Corpus exists to be the canonical,
+continuously-updated aggregation — grounded in real GitHub issues,
+classified against a unified taxonomy, and cross-linked to the existing
+academic records.
 
 ## Installation
 
@@ -39,7 +41,7 @@ uv pip install -e ".[dev]"
 from datasets import load_dataset
 
 # Load the latest issues (streaming avoids downloading the whole corpus).
-issues = load_dataset("USER/agentfail", "issues", split="train", streaming=True)
+issues = load_dataset("USER/agent-reliability-corpus", "issues", split="train", streaming=True)
 
 for row in issues.take(5):
     print(row["framework_slug"], row["locus"], row["symptom"], "-", row["title"])
@@ -61,14 +63,14 @@ export ANTHROPIC_API_KEY=...
 export GITHUB_TOKEN=...   # optional but strongly recommended (5000 req/hr)
 
 # Dry-run: no Anthropic calls, useful for smoke testing.
-uv run agentfail-pipeline \
+uv run arc-pipeline \
     --dry-run-classifier \
     --max-per-framework 5 \
     --output-dir data/snapshots
 
 # Full run (pushes to HF; requires HF_TOKEN).
 export HF_TOKEN=...
-uv run agentfail-pipeline --push --hf-repo-id USER/agentfail
+uv run arc-pipeline --push --hf-repo-id USER/agent-reliability-corpus
 ```
 
 Weekly GitHub Actions pickup lives in `.github/workflows/weekly.yml`.
@@ -110,11 +112,11 @@ See [`src/agentfail/taxonomy.py`](src/agentfail/taxonomy.py) and
 Once v1.0 is released with a DOI, cite as:
 
 ```bibtex
-@dataset{agentfail2026,
-  title  = {agentfail: A Living Cross-Linked Corpus of Agent Framework Failures},
-  author = {agentfail maintainers},
+@dataset{agent_reliability_corpus_2026,
+  title  = {Agent Reliability Corpus: A Living Cross-Linked Corpus of Agent Framework Failures},
+  author = {Agent Reliability Corpus contributors},
   year   = {2026},
-  url    = {https://huggingface.co/datasets/USER/agentfail},
+  url    = {https://huggingface.co/datasets/USER/agent-reliability-corpus},
 }
 ```
 
@@ -128,10 +130,12 @@ Once v1.0 is released with a DOI, cite as:
 
 ## License
 
-MIT for the code. The dataset itself is published under CC-BY-4.0 — the
-underlying GitHub issues remain under their respective project licenses;
-we publish derivative classifications + links, not the full issue bodies
-verbatim where upstream licenses forbid it.
+- Code: [MIT](LICENSE)
+- Dataset: [CC-BY-4.0](LICENSE-DATA)
+
+The underlying GitHub issues remain under their respective project licenses;
+this repository publishes derivative classifications + links, not the full
+issue bodies verbatim where upstream licenses forbid it.
 
 ## Prior work cross-linked
 

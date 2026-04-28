@@ -55,12 +55,12 @@ jobs:
           if [ "${PUSH_TO_HUB}" = "true" ]; then
             args+=(--push --hf-repo-id "${HF_REPO_ID}")
           fi
-          uv run agentfail-pipeline "${args[@]}"
+          uv run arc-pipeline "${args[@]}"
 
       - name: commit updated state
         run: |
-          git config user.name "agentfail-bot"
-          git config user.email "bot@agentfail.local"
+          git config user.name "arc-bot"
+          git config user.email "bot@agent-reliability-corpus.local"
           git add data/pipeline_state.json
           if ! git diff --cached --quiet; then
             git commit -m "chore: update pipeline state ($(date -u +%Y-%m-%d))"

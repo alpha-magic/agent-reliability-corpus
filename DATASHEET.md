@@ -1,4 +1,4 @@
-# Datasheet for `agentfail`
+# Datasheet for the Agent Reliability Corpus
 
 Following the *Datasheets for Datasets* framework (Gebru et al., 2018).
 
@@ -8,14 +8,14 @@ Following the *Datasheets for Datasets* framework (Gebru et al., 2018).
 Research on agent-framework reliability is fragmented across several recent
 academic corpora (MAST, AgentFail, Agent Error Benchmark, Characterizing
 Faults in Agentic AI, Framework Bugs). Each is a static snapshot, none
-cross-link, none continuously update. `agentfail` provides a shared
-taxonomy and a continuously-maintained superset grounded in real GitHub
-issues, so downstream researchers can work from one living dataset rather
-than assembling per-paper ad-hoc corpora.
+cross-link, none continuously update. The Agent Reliability Corpus
+provides a shared taxonomy and a continuously-maintained superset grounded
+in real GitHub issues, so downstream researchers can work from one living
+dataset rather than assembling per-paper ad-hoc corpora.
 
 **Who created it and on behalf of whom?**
-The `agentfail` maintainers, as an open-source community project. No
-institutional funding.
+The Agent Reliability Corpus contributors, as an open-source community
+project. No institutional funding.
 
 ## Composition
 
@@ -142,7 +142,7 @@ git revision under the Hub repo. Loadable via `datasets.load_dataset()`.
 ## Maintenance
 
 **Who is maintaining the dataset?**
-The `agentfail` maintainers. Contact via the GitHub repo.
+The Agent Reliability Corpus contributors. Contact via the GitHub repo.
 
 **How often will it be updated?**
 Weekly (Monday 07:00 UTC) via GitHub Actions. The curator agent (`agent B`)
