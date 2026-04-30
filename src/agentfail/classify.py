@@ -126,9 +126,7 @@ class Classifier:
         self._model = model
         # Build the system message once. Taxonomy block first (the cacheable
         # prefix), directive last. Reordering kills cache hits silently.
-        self._system_content = (
-            render_taxonomy_for_prompt() + "\n\n---\n\n" + _DIRECTIVE
-        )
+        self._system_content = render_taxonomy_for_prompt() + "\n\n---\n\n" + _DIRECTIVE
 
     # --- Single classification call -------------------------------------
 
@@ -148,6 +146,25 @@ class Classifier:
             # rates. For a structured tool-call task we don't need them.
             extra_body={"thinking": {"type": "disabled"}},
         )
+
+        # Log token usage so cost is visible per call. DeepSeek's response.usage
+        # follows the OpenAI shape; provider-specific fields (cached tokens,
+        # reasoning tokens) live under model_extra and are surfaced if present.
+        usage = response.usage
+        if usage is not None:
+            extra = getattr(usage, "model_extra", None) or {}
+            log.info(
+                "classify.usage",
+                node_id=issue.node_id,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                total_tokens=usage.total_tokens,
+                # DeepSeek-specific: prompt_cache_hit_tokens, prompt_cache_miss_tokens
+                cache_hit_tokens=extra.get("prompt_cache_hit_tokens"),
+                cache_miss_tokens=extra.get("prompt_cache_miss_tokens"),
+                # Reasoning-token counters (some providers expose these)
+                completion_tokens_details=getattr(usage, "completion_tokens_details", None),
+            )
 
         choice = response.choices[0]
         tool_calls = choice.message.tool_calls or []

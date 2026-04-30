@@ -31,6 +31,7 @@ dev = [
 [project.scripts]
 arc-pipeline = "agentfail.pipeline:main"
 arc-curator = "agentfail.curator:main"
+arc-merge-shards = "agentfail.merge:main"
 
 [build-system]
 requires = ["hatchling"]

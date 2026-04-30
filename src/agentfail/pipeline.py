@@ -91,6 +91,7 @@ def run(
     hf_repo_id: str | None,
     max_per_framework: int | None = None,
     dry_run_classifier: bool = False,
+    only_framework: str | None = None,
 ) -> Path:
     """Run the pipeline end-to-end; return the snapshot directory path.
 
@@ -104,12 +105,23 @@ def run(
         dry_run_classifier: If True, skip the LLM classifier entirely and
             emit a placeholder classification for every issue. Used by
             end-to-end tests that can't hit the DeepSeek API.
+        only_framework: If set, only scrape + classify this one framework
+            slug. Used by the backfill workflow to shard the pipeline
+            across parallel GitHub Actions jobs (one per framework).
     """
     started_at = datetime.now(UTC)
     revision = current_revision()
-    log.info("pipeline.start", revision=revision, push=push)
+    log.info("pipeline.start", revision=revision, push=push, only_framework=only_framework)
 
     state = PipelineState.load(state_path)
+
+    if only_framework is not None:
+        frameworks_to_run = tuple(f for f in FRAMEWORKS if f.slug == only_framework)
+        if not frameworks_to_run:
+            valid = sorted(f.slug for f in FRAMEWORKS)
+            raise RuntimeError(f"Unknown framework slug {only_framework!r}. Valid slugs: {valid}")
+    else:
+        frameworks_to_run = FRAMEWORKS
 
     classified: list[ClassifiedIssue] = []
     classifier: Classifier | None = None
@@ -117,7 +129,7 @@ def run(
         classifier = Classifier()
 
     with GitHubClient() as github:
-        for framework in FRAMEWORKS:
+        for framework in frameworks_to_run:
             since = state.since_for(framework.slug)
             latest_updated: datetime | None = None
             for fw_count, raw in enumerate(
@@ -237,6 +249,14 @@ def main() -> None:
         action="store_true",
         help="Skip the LLM classifier (emit placeholder rows).",
     )
+    parser.add_argument(
+        "--only-framework",
+        default=None,
+        help=(
+            "Run the pipeline for a single framework slug (e.g. 'langchain'). "
+            "Used by the backfill workflow to shard work across parallel jobs."
+        ),
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -248,6 +268,7 @@ def main() -> None:
         hf_repo_id=args.hf_repo_id,
         max_per_framework=args.max_per_framework,
         dry_run_classifier=args.dry_run_classifier,
+        only_framework=args.only_framework,
     )
 
 

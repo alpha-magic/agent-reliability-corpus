@@ -1,0 +1,156 @@
+name: backfill
+
+# Manually-triggered, fan-out-then-merge workflow that classifies every
+# framework's full historical issue queue in parallel. Each matrix job
+# fits well under the 6-hour per-job cap; the whole backfill completes
+# in a single working-day window.
+#
+# Run with:
+#   gh workflow run backfill.yml \
+#     -f max_per_framework=200 \
+#     -f push=true
+#
+# Leave max_per_framework empty to do the full uncapped backfill across
+# every framework.
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_per_framework:
+        description: "Cap issues per framework (empty = uncapped full backfill)"
+        required: false
+        default: ""
+      push:
+        description: "Push merged snapshot to the HF Hub"
+        required: false
+        type: boolean
+        default: true
+      commit_state:
+        description: "Commit merged pipeline_state.json back to main"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write  # for the state-commit-back step
+
+jobs:
+  classify:
+    name: classify-${{ matrix.framework }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350  # ~5h50, just under GitHub's 6h per-job cap
+    strategy:
+      fail-fast: false  # one framework's failure shouldn't kill the others
+      matrix:
+        framework:
+          - agno
+          - autogen
+          - autogpt
+          - crewai
+          - langchain
+          - langgraph
+          - letta
+          - llamaindex
+          - mastra
+          - semantic_kernel
+          - smolagents
+          - swarm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: sync dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install -e .
+
+      - name: classify framework
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAX_PER_FRAMEWORK: ${{ inputs.max_per_framework }}
+        run: |
+          mkdir -p shard
+          args=(
+            --only-framework "${{ matrix.framework }}"
+            --output-dir shard/snapshots
+            --state-path shard/pipeline_state.json
+          )
+          if [ -n "${MAX_PER_FRAMEWORK}" ]; then
+            args+=(--max-per-framework "${MAX_PER_FRAMEWORK}")
+          fi
+          uv run arc-pipeline "${args[@]}"
+
+      - name: upload shard
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.framework }}
+          path: shard/
+          retention-days: 7
+
+  merge-and-push:
+    needs: classify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # need history for the state-commit-back step
+
+      - name: install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: sync dependencies
+        run: |
+          uv venv --python 3.12
+          uv pip install -e .
+
+      - name: download all shards
+        uses: actions/download-artifact@v4
+        with:
+          path: shards/
+          pattern: shard-*
+
+      - name: merge (and optionally push) shards
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_REPO_ID: ${{ vars.HF_REPO_ID }}
+        run: |
+          args=(
+            --shards-dir shards
+            --output-dir data/snapshots
+            --state-path data/pipeline_state.json
+          )
+          if [ "${{ inputs.push }}" = "true" ]; then
+            args+=(--push --hf-repo-id "${HF_REPO_ID}")
+          fi
+          uv run arc-merge-shards "${args[@]}"
+
+      - name: upload merged snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: merged-snapshot
+          path: |
+            data/snapshots/
+            data/pipeline_state.json
+          retention-days: 30
+
+      - name: commit updated state
+        if: ${{ inputs.commit_state == true }}
+        run: |
+          git config user.name "arc-bot"
+          git config user.email "bot@agent-reliability-corpus.local"
+          # data/ is gitignored; force-add the state file so it can land on main.
+          git add -f data/pipeline_state.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update pipeline state from backfill ($(date -u +%Y-%m-%d))"
+            git push
+          else
+            echo "no state changes to commit"
+          fi

@@ -47,8 +47,18 @@ class _FakeChoice:
 
 
 @dataclass
+class _FakeUsage:
+    prompt_tokens: int = 1000
+    completion_tokens: int = 200
+    total_tokens: int = 1200
+    completion_tokens_details: Any = None
+    model_extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class _FakeResponse:
     choices: list[_FakeChoice]
+    usage: _FakeUsage = field(default_factory=_FakeUsage)
 
 
 @dataclass
