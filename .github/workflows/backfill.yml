@@ -5,17 +5,23 @@ name: backfill
 # fits well under the 6-hour per-job cap; the whole backfill completes
 # in a single working-day window.
 #
-# Run with:
-#   gh workflow run backfill.yml \
-#     -f max_per_framework=200 \
-#     -f push=true
+# Full uncapped run across all 12 frameworks:
+#   gh workflow run backfill.yml -f max_per_framework= -f push=true
 #
-# Leave max_per_framework empty to do the full uncapped backfill across
-# every framework.
+# Smoke test on 2 frameworks with a tiny per-framework cap (cheap, fast):
+#   gh workflow run backfill.yml \
+#     -f frameworks="langchain,crewai" \
+#     -f max_per_framework=10 \
+#     -f push=false \
+#     -f commit_state=false
 
 on:
   workflow_dispatch:
     inputs:
+      frameworks:
+        description: "Comma-separated framework slugs to run (empty = all 12)"
+        required: false
+        default: ""
       max_per_framework:
         description: "Cap issues per framework (empty = uncapped full backfill)"
         required: false
@@ -35,26 +41,37 @@ permissions:
   contents: write  # for the state-commit-back step
 
 jobs:
+  setup:
+    # Resolve the matrix at runtime so the user can scope a smoke test to a
+    # subset of frameworks via the `frameworks` input. Outputs a JSON array
+    # the matrix consumes via fromJSON.
+    name: resolve matrix
+    runs-on: ubuntu-latest
+    outputs:
+      frameworks: ${{ steps.resolve.outputs.frameworks }}
+    steps:
+      - id: resolve
+        env:
+          FRAMEWORKS_INPUT: ${{ inputs.frameworks }}
+        run: |
+          if [ -z "${FRAMEWORKS_INPUT}" ]; then
+            json='["agno","autogen","autogpt","crewai","langchain","langgraph","letta","llamaindex","mastra","semantic_kernel","smolagents","swarm"]'
+          else
+            # Trim whitespace around each slug, drop empties.
+            json=$(echo "${FRAMEWORKS_INPUT}" | jq -Rc 'split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(length > 0))')
+          fi
+          echo "frameworks=${json}" >> "$GITHUB_OUTPUT"
+          echo "Resolved framework matrix: ${json}"
+
   classify:
     name: classify-${{ matrix.framework }}
+    needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 350  # ~5h50, just under GitHub's 6h per-job cap
     strategy:
       fail-fast: false  # one framework's failure shouldn't kill the others
       matrix:
-        framework:
-          - agno
-          - autogen
-          - autogpt
-          - crewai
-          - langchain
-          - langgraph
-          - letta
-          - llamaindex
-          - mastra
-          - semantic_kernel
-          - smolagents
-          - swarm
+        framework: ${{ fromJSON(needs.setup.outputs.frameworks) }}
     steps:
       - uses: actions/checkout@v4
 
