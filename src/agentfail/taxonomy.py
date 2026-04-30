@@ -203,8 +203,10 @@ ALL_LABELS: tuple[TaxonomyLabel, ...] = LOCUS + PHASE + SYMPTOM + ROOT_CAUSE
 def render_taxonomy_for_prompt() -> str:
     """Render the full taxonomy as a prompt-ready block.
 
-    Called once per classifier instantiation and cached via cache_control
-    on the Anthropic API. Deterministic output so cache key is stable.
+    Called once per classifier instantiation and used as the cacheable
+    prefix of every prompt. Output is deterministic so the cache key is
+    stable across calls (DeepSeek's automatic prefix cache requires
+    byte-identical prefixes).
     """
 
     def _fmt(axis_name: str, labels: tuple[TaxonomyLabel, ...]) -> str:

@@ -103,7 +103,7 @@ def run(
             for smoke tests; None means no cap.
         dry_run_classifier: If True, skip the LLM classifier entirely and
             emit a placeholder classification for every issue. Used by
-            end-to-end tests that can't hit the Anthropic API.
+            end-to-end tests that can't hit the DeepSeek API.
     """
     started_at = datetime.now(UTC)
     revision = current_revision()
@@ -190,7 +190,7 @@ def _dry_run_classify(issue: RawIssue) -> ClassifiedIssue:
     return ClassifiedIssue.from_parts(
         issue,
         placeholder,
-        classifier_tier="human",
+        classifier_tier="dry_run",
         classifier_model="dry-run",
         classifier_version=__version__,
         classified_at=datetime.now(UTC),

@@ -63,15 +63,15 @@ def test_classified_issue_from_parts_roundtrip(raw_issue, classification_confide
     row = ClassifiedIssue.from_parts(
         raw_issue,
         classification_confident,
-        classifier_tier="haiku",
-        classifier_model="claude-haiku-4-5-20251001",
+        classifier_tier="v4_pro",
+        classifier_model="deepseek-v4-pro",
         classifier_version="0.1.0",
         classified_at=datetime(2026, 4, 23, tzinfo=UTC),
     )
     assert row.framework_slug == raw_issue.framework_slug
     assert row.issue_number == raw_issue.issue_number
     assert row.locus == classification_confident.locus
-    assert row.classifier_tier == "haiku"
+    assert row.classifier_tier == "v4_pro"
 
 
 def test_cross_link_requires_valid_corpus_id():

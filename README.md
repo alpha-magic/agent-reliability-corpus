@@ -59,10 +59,10 @@ Four configs are published; each is a standalone table on the Hub:
 ## Running the pipeline locally
 
 ```bash
-export ANTHROPIC_API_KEY=...
+export DEEPSEEK_API_KEY=...
 export GITHUB_TOKEN=...   # optional but strongly recommended (5000 req/hr)
 
-# Dry-run: no Anthropic calls, useful for smoke testing.
+# Dry-run: no LLM calls, useful for smoke testing.
 uv run arc-pipeline \
     --dry-run-classifier \
     --max-per-framework 5 \
@@ -77,23 +77,28 @@ Weekly GitHub Actions pickup lives in `.github/workflows/weekly.yml`.
 
 ## Classifier design
 
-Issues flow through a tiered classifier with confidence-based escalation:
+Single-tier classifier using **DeepSeek V4-pro** via the OpenAI-compatible
+API. One model call per issue, structured output enforced by tool calling
+against the `Classification` Pydantic schema.
 
 ```
-  Haiku 4.5  ─── high-confidence ───▶ accept
-       │
-       └─── low confidence ──▶ Sonnet 4.6 ─── high-confidence ───▶ accept
-                                    │
-                                    └─── low conf ──▶ Opus 4.7 ──▶ accept + flag
+  RawIssue ──▶ deepseek-v4-pro (thinking disabled) ──▶ Classification
 ```
 
-Every row records the tier, model ID, and classifier version, so each label
-is fully reproducible. The taxonomy block (~3.6KB) is `cache_control`-marked
-on the Anthropic API — the cached prefix cuts per-call cost by ~90% once
-warmed.
+Reasoning ("thinking") mode is explicitly disabled. For a structured
+tool-call task, reasoning tokens are pure cost overhead — the output is
+a small, schema-constrained JSON object that doesn't benefit from inline
+chain-of-thought, and DeepSeek bills reasoning tokens at output rates.
 
-Estimated cost: ~$10/month for ~10K classified issues/month with Haiku
-dominance (~90% of calls).
+Every row records the model ID, classifier version, and timestamp, so each
+label is fully reproducible. The ~3.6KB taxonomy block sits at the start
+of every prompt and is byte-identical across calls; DeepSeek's automatic
+prefix cache discounts it by ~50× on hit.
+
+Estimated cost: well under $1 per 1,000 classified issues with cache-warm
+runs. The pipeline uses the OpenAI SDK with a custom `base_url`, so
+swapping in any other OpenAI-compatible backend (Mistral, Together,
+OpenRouter, a local vLLM server, etc.) is a one-line change.
 
 ## Unified taxonomy
 

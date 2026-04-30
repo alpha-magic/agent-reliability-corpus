@@ -1,6 +1,6 @@
 """End-to-end pipeline test.
 
-Uses `--dry-run-classifier` (so no Anthropic API call) and respx to mock
+Uses `--dry-run-classifier` (so no LLM API call) and respx to mock
 GitHub. Verifies the full scrape → classify → write-snapshot path.
 """
 
@@ -56,7 +56,7 @@ def test_pipeline_dry_run_produces_snapshot(tmp_path: Path, github_issue_payload
     # Issues parquet has one row per framework (each mocked returns 1 issue)
     df = pl.read_parquet(snapshot_dir / "issues.parquet")
     assert len(df) == len(FRAMEWORKS)
-    assert df["classifier_tier"].unique().to_list() == ["human"]  # dry-run marker
+    assert df["classifier_tier"].unique().to_list() == ["dry_run"]  # dry-run marker
     assert df["classifier_model"].unique().to_list() == ["dry-run"]
 
     # Taxonomy parquet is populated

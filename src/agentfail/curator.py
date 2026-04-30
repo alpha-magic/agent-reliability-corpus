@@ -34,14 +34,16 @@ import polars as pl
 import structlog
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.settings import ModelSettings
 
-from agentfail.classify import MODEL_OPUS
+from agentfail.classify import DEEPSEEK_BASE_URL, MODEL_V4_PRO
 from agentfail.frameworks import FRAMEWORK_BY_SLUG
 
 log = structlog.get_logger(__name__)
 
-CURATOR_MODEL_ID = MODEL_OPUS  # the curator is rare + important; worth Opus
+CURATOR_MODEL_ID = MODEL_V4_PRO  # same single model as the classifier
 
 
 # --- Agent dependency bundle --------------------------------------------
@@ -80,7 +82,7 @@ class DriftReport(BaseModel):
     agreement: float = Field(..., ge=0.0, le=1.0)
     disagreements: list[str] = Field(
         default_factory=list,
-        description="node_ids where Haiku and Opus labels differ.",
+        description="node_ids where the audit classifier disagrees with the stored label.",
     )
     recommendation: Literal["no_action", "investigate", "reclassify_cohort"]
     notes: str
@@ -131,9 +133,21 @@ def build_curator_agent() -> Agent[CuratorDeps, CuratorDecision]:
 
     The agent is built lazily so tests that don't exercise the LLM (and
     therefore don't need an API key) can import this module freely.
-    """
 
-    model = AnthropicModel(CURATOR_MODEL_ID)
+    Uses DeepSeek V4-pro via the OpenAI-compatible API. Reasoning ("thinking")
+    mode is disabled to keep output token counts bounded — the curator's
+    structured-output schema doesn't benefit from inline reasoning traces,
+    and DeepSeek bills reasoning tokens at output rates.
+    """
+    provider = OpenAIProvider(
+        base_url=DEEPSEEK_BASE_URL,
+        api_key=os.environ.get("DEEPSEEK_API_KEY", ""),
+    )
+    model = OpenAIModel(
+        CURATOR_MODEL_ID,
+        provider=provider,
+        settings=ModelSettings(extra_body={"thinking": {"type": "disabled"}}),
+    )
     agent: Agent[CuratorDeps, CuratorDecision] = Agent(
         model=model,
         deps_type=CuratorDeps,
@@ -174,10 +188,10 @@ def build_curator_agent() -> Agent[CuratorDeps, CuratorDecision]:
     ) -> dict[str, object]:
         """Return summary stats for a sample of the latest classified snapshot.
 
-        A real drift audit would re-run an Opus classifier on the sampled
+        A real drift audit would re-run an audit classifier on the sampled
         rows and compare labels. This skeleton returns the per-axis label
         distribution of the sample so the curator can reason about it; the
-        Opus re-run can slot in as an extension.
+        re-run can slot in as an extension.
         """
         snapshot_dir = ctx.deps.snapshot_dir
         # Find the latest revision under snapshot_dir/
@@ -266,8 +280,8 @@ async def run_curator(
     snapshot_dir: Path,
     dataset_repo_id: str | None = None,
 ) -> CuratorDecision:
-    if "ANTHROPIC_API_KEY" not in os.environ:
-        raise RuntimeError("ANTHROPIC_API_KEY required to run the curator.")
+    if "DEEPSEEK_API_KEY" not in os.environ:
+        raise RuntimeError("DEEPSEEK_API_KEY required to run the curator.")
 
     deps = CuratorDeps(snapshot_dir=snapshot_dir, dataset_repo_id=dataset_repo_id)
     agent = build_curator_agent()

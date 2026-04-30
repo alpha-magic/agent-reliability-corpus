@@ -1,77 +1,107 @@
-"""Classifier tests — mock the Anthropic client so no network hits.
+"""Classifier tests — mock the OpenAI-compatible client so no network hits.
 
-Focused on the tier-escalation logic; the underlying Anthropic call is the
-narrow seam we mock. A single `FakeAnthropicClient` records calls and
-returns a configurable sequence of tool_use responses.
+A single `_FakeOpenAIClient` records calls and returns a configurable
+sequence of tool-call responses shaped like OpenAI chat completions. The
+classifier itself is single-tier (one DeepSeek V4-pro call per issue),
+so these tests focus on request shape, response parsing, and argument
+plumbing rather than escalation logic.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
 from agentfail.classify import (
-    HAIKU_ACCEPT_THRESHOLD,
-    SONNET_ACCEPT_THRESHOLD,
+    MODEL_V4_PRO,
     Classifier,
     _render_issue_for_classification,
 )
 from agentfail.schema import Classification
 
-# --- Fake Anthropic client ----------------------------------------------
+# --- Fake OpenAI client -------------------------------------------------
 
 
 @dataclass
-class _FakeToolUseBlock:
-    type: str
+class _FakeFunction:
     name: str
-    input: dict[str, Any]
+    arguments: str
+
+
+@dataclass
+class _FakeToolCall:
+    function: _FakeFunction
+    type: str = "function"
 
 
 @dataclass
 class _FakeMessage:
-    content: list[_FakeToolUseBlock]
+    tool_calls: list[_FakeToolCall]
 
 
 @dataclass
-class _FakeMessages:
+class _FakeChoice:
+    message: _FakeMessage
+    finish_reason: str = "tool_calls"
+
+
+@dataclass
+class _FakeResponse:
+    choices: list[_FakeChoice]
+
+
+@dataclass
+class _FakeChatCompletions:
     responses: list[Classification]
-    calls: list[str] = field(default_factory=list)  # records model IDs called
+    calls: list[dict[str, Any]] = field(default_factory=list)
 
-    def create(self, **kwargs: Any) -> _FakeMessage:
+    def create(self, **kwargs: Any) -> _FakeResponse:
         if not self.responses:
-            raise AssertionError("FakeMessages ran out of responses")
-        self.calls.append(kwargs["model"])
+            raise AssertionError("FakeChatCompletions ran out of responses")
+        self.calls.append(kwargs)
         next_cls = self.responses.pop(0)
-        block = _FakeToolUseBlock(
-            type="tool_use",
-            name="classify_failure",
-            input=next_cls.model_dump(),
+        tool_call = _FakeToolCall(
+            function=_FakeFunction(
+                name="classify_failure",
+                arguments=json.dumps(next_cls.model_dump()),
+            )
         )
-        return _FakeMessage(content=[block])
+        return _FakeResponse(choices=[_FakeChoice(message=_FakeMessage(tool_calls=[tool_call]))])
 
 
 @dataclass
-class _FakeAnthropicClient:
-    messages: _FakeMessages
+class _FakeChat:
+    completions: _FakeChatCompletions
 
 
-def _classifier_with_fakes(responses: list[Classification]) -> tuple[Classifier, _FakeMessages]:
-    """Build a Classifier whose Anthropic client is replaced with a fake."""
+@dataclass
+class _FakeOpenAIClient:
+    chat: _FakeChat
+
+
+def _classifier_with_fakes(
+    responses: list[Classification],
+) -> tuple[Classifier, _FakeChatCompletions]:
+    """Build a Classifier whose OpenAI client is replaced with a fake."""
     c = Classifier.__new__(Classifier)  # bypass __init__ (needs API key)
-    fake_messages = _FakeMessages(responses=list(responses))
-    c._client = _FakeAnthropicClient(messages=fake_messages)  # type: ignore[attr-defined]
-    # Still need the taxonomy prompt + models dict
-    from agentfail.classify import MODEL_HAIKU, MODEL_OPUS, MODEL_SONNET
+    fake_completions = _FakeChatCompletions(responses=list(responses))
+    c._client = _FakeOpenAIClient(chat=_FakeChat(completions=fake_completions))  # type: ignore[attr-defined]
+    c._model = MODEL_V4_PRO  # type: ignore[attr-defined]
     from agentfail.taxonomy import render_taxonomy_for_prompt
 
-    c._taxonomy_prompt = render_taxonomy_for_prompt()  # type: ignore[attr-defined]
-    c._models = {  # type: ignore[attr-defined]
-        "haiku": MODEL_HAIKU,
-        "sonnet": MODEL_SONNET,
-        "opus": MODEL_OPUS,
-    }
-    return c, fake_messages
+    # Mirror the system-content build in __init__ so tests see the same
+    # cacheable prefix the production code sends.
+    c._system_content = (  # type: ignore[attr-defined]
+        render_taxonomy_for_prompt()
+        + "\n\n---\n\n"
+        + (
+            "You are a careful, conservative classifier. When in doubt, "
+            "prefer `unknown` and set `needs_review=true`. Do not invent "
+            "labels outside the taxonomy."
+        )
+    )
+    return c, fake_completions
 
 
 def _make_classification(confidence: float, needs_review: bool = False) -> Classification:
@@ -86,60 +116,74 @@ def _make_classification(confidence: float, needs_review: bool = False) -> Class
     )
 
 
-# --- Escalation tests ---------------------------------------------------
+# --- Single-call behavior tests -----------------------------------------
 
 
-def test_haiku_confident_result_is_accepted(raw_issue):
-    c, fake = _classifier_with_fakes(
-        [_make_classification(confidence=HAIKU_ACCEPT_THRESHOLD + 0.05)]
-    )
+def test_classify_returns_v4_pro_tier(raw_issue):
+    c, fake = _classifier_with_fakes([_make_classification(confidence=0.9)])
     result = c.classify(raw_issue)
-    assert result.tier == "haiku"
+    assert result.tier == "v4_pro"
+    assert result.model_id == MODEL_V4_PRO
     assert len(fake.calls) == 1
 
 
-def test_low_haiku_confidence_escalates_to_sonnet(raw_issue):
-    c, fake = _classifier_with_fakes(
-        [
-            _make_classification(confidence=HAIKU_ACCEPT_THRESHOLD - 0.1),
-            _make_classification(confidence=SONNET_ACCEPT_THRESHOLD + 0.05),
-        ]
-    )
+def test_classify_propagates_needs_review(raw_issue):
+    # needs_review propagates straight to the output row regardless of
+    # confidence — there is no escalation tier to gate it on.
+    c, fake = _classifier_with_fakes([_make_classification(confidence=0.95, needs_review=True)])
     result = c.classify(raw_issue)
-    assert result.tier == "sonnet"
-    assert len(fake.calls) == 2
-    # The escalation called a different model
-    assert fake.calls[0] != fake.calls[1]
-
-
-def test_needs_review_escalates_even_with_high_confidence(raw_issue):
-    # Haiku returns high confidence but flags needs_review — still escalate.
-    c, fake = _classifier_with_fakes(
-        [
-            _make_classification(confidence=0.95, needs_review=True),
-            _make_classification(confidence=SONNET_ACCEPT_THRESHOLD + 0.05),
-        ]
-    )
-    result = c.classify(raw_issue)
-    assert result.tier == "sonnet"
-    assert len(fake.calls) == 2
-
-
-def test_low_sonnet_confidence_escalates_to_opus(raw_issue):
-    c, fake = _classifier_with_fakes(
-        [
-            _make_classification(confidence=HAIKU_ACCEPT_THRESHOLD - 0.2),
-            _make_classification(confidence=SONNET_ACCEPT_THRESHOLD - 0.1),
-            _make_classification(
-                confidence=0.4, needs_review=True
-            ),  # opus: still low, but accepted
-        ]
-    )
-    result = c.classify(raw_issue)
-    assert result.tier == "opus"
-    assert len(fake.calls) == 3
-    # Opus output is still accepted even when low-confidence; needs_review will propagate.
     assert result.classification.needs_review is True
+    assert len(fake.calls) == 1
+
+
+def test_classify_accepts_low_confidence_output(raw_issue):
+    # Single-tier: low-confidence outputs are still accepted (no fallback).
+    # Downstream filters can use confidence + needs_review to drop them.
+    c, _ = _classifier_with_fakes([_make_classification(confidence=0.2, needs_review=True)])
+    result = c.classify(raw_issue)
+    assert result.tier == "v4_pro"
+    assert result.classification.confidence == 0.2
+
+
+# --- Request-shape tests ------------------------------------------------
+
+
+def test_request_disables_thinking_mode(raw_issue):
+    """Reasoning tokens must be suppressed for cost control."""
+    c, fake = _classifier_with_fakes([_make_classification(confidence=0.9)])
+    c.classify(raw_issue)
+    sent = fake.calls[0]
+    assert sent["extra_body"] == {"thinking": {"type": "disabled"}}
+
+
+def test_request_uses_temperature_zero(raw_issue):
+    c, fake = _classifier_with_fakes([_make_classification(confidence=0.9)])
+    c.classify(raw_issue)
+    assert fake.calls[0]["temperature"] == 0
+
+
+def test_request_targets_v4_pro_with_required_tool(raw_issue):
+    c, fake = _classifier_with_fakes([_make_classification(confidence=0.9)])
+    c.classify(raw_issue)
+    sent = fake.calls[0]
+    assert sent["model"] == MODEL_V4_PRO
+    assert sent["tool_choice"]["function"]["name"] == "classify_failure"
+    assert sent["tools"][0]["function"]["name"] == "classify_failure"
+
+
+def test_system_message_is_byte_identical_across_calls(raw_issue):
+    """Cache hits depend on the system prefix never changing."""
+    c, fake = _classifier_with_fakes(
+        [
+            _make_classification(confidence=0.9),
+            _make_classification(confidence=0.85),
+        ]
+    )
+    c.classify(raw_issue)
+    c.classify(raw_issue)
+    sys1 = fake.calls[0]["messages"][0]["content"]
+    sys2 = fake.calls[1]["messages"][0]["content"]
+    assert sys1 == sys2, "system prompt drifted between calls — would defeat prefix cache"
 
 
 # --- Renderer tests -----------------------------------------------------

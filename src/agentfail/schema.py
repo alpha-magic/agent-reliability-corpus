@@ -56,7 +56,11 @@ RootCause = Literal[
     "unknown",
 ]
 
-ClassifierTier = Literal["haiku", "sonnet", "opus", "human"]
+# Single-tier classifier (DeepSeek V4-pro). The "human" tier is reserved for
+# manually-corrected rows; "dry_run" for the placeholder rows produced by
+# `--dry-run-classifier`. Add additional model tiers here if escalation is
+# reintroduced (e.g. "v4_flash" for a cheaper bottom tier).
+ClassifierTier = Literal["v4_pro", "human", "dry_run"]
 
 
 # --- Core models -----------------------------------------------------------
@@ -159,9 +163,7 @@ class ClassifiedIssue(BaseModel):
 
     # Reproducibility
     classifier_tier: ClassifierTier
-    classifier_model: str = Field(
-        ..., description="Pinned model ID, e.g. 'claude-haiku-4-5-20251001'"
-    )
+    classifier_model: str = Field(..., description="Pinned model ID, e.g. 'deepseek-v4-pro'")
     classifier_version: str = Field(
         ..., description="Agent Reliability Corpus release that produced this label"
     )

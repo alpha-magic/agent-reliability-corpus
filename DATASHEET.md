@@ -60,9 +60,11 @@ Not in the traditional ML sense. Users commonly filter by:
 **Are there any errors, sources of noise, or redundancies?**
 
 1. **Classifier noise.** Every LLM classifier has non-zero error. We
-   mitigate with tiered escalation (Haiku → Sonnet → Opus) and record the
-   tier per row. Monthly human audits sample ~50 rows for manual review
-   (see `curator.py::audit_classification_drift`).
+   record the model ID and classifier version per row, and confidence is
+   reported on every classification. Monthly human audits sample ~50 rows
+   for manual review (see `curator.py::audit_classification_drift`). The
+   v0 classifier is single-tier (DeepSeek V4-pro); a multi-tier variant
+   may be reintroduced if cost/quality tradeoffs warrant it.
 2. **Non-failure issues.** The pre-filter is permissive; the classifier
    may receive feature requests or discussions and should return
    `symptom = unknown`, `needs_review = true` for those. Users wanting a
@@ -70,9 +72,11 @@ Not in the traditional ML sense. Users commonly filter by:
 3. **Truncation.** Issue bodies > 4000 chars are truncated at classifier
    input; this may reduce context for very long issues. The truncation
    marker is visible in the classifier reasoning.
-4. **Label noise across tiers.** Haiku and Opus may disagree on
-   edge-of-taxonomy issues. The `classifier_tier` field lets analyses
-   filter by the lowest acceptable tier.
+4. **Edge-of-taxonomy noise.** Issues that don't cleanly fit the
+   four-axis taxonomy (feature requests, discussions that slipped the
+   prefilter, ambiguous bug reports) tend to be labeled with `unknown`
+   on one or more axes and `needs_review=true`. Filter on those fields
+   for high-precision subsets.
 
 **Is the dataset self-contained, or does it rely on external resources?**
 Self-contained. The `cross_links` config references external academic
