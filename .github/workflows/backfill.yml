@@ -79,6 +79,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
+          cache-dependency-glob: "pyproject.toml"  # we don't ship a uv.lock
 
       - name: sync dependencies
         run: |
@@ -122,6 +123,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
+          cache-dependency-glob: "pyproject.toml"  # we don't ship a uv.lock
 
       - name: sync dependencies
         run: |
