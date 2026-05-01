@@ -28,6 +28,12 @@ from pathlib import Path
 
 import polars as pl
 import structlog
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    InternalServerError,
+    RateLimitError,
+)
 from sklearn.metrics import cohen_kappa_score
 from tenacity import (
     retry,
@@ -189,9 +195,16 @@ def relabel(
         log.info("relabel.sampled", n=df.height, stratify_by=stratify_by, seed=seed)
 
     @retry(
-        stop=stop_after_attempt(4),
-        wait=wait_exponential(multiplier=2, min=1, max=30),
-        retry=retry_if_exception_type(Exception),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=1, max=15),
+        # Only retry on transient errors. 400-class errors (BadRequest,
+        # UnprocessableEntity) come from schema-rejection of the model's
+        # output and are deterministic — retrying just burns time. We hit
+        # this on Llama 4 Scout against Groq's strict pre-validation
+        # where a single failed issue cost ~60s of pointless retries.
+        retry=retry_if_exception_type(
+            (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError)
+        ),
         reraise=True,
     )
     def _classify_with_retry(raw: RawIssue):

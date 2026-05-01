@@ -1,0 +1,38 @@
+{
+  "n": 494,
+  "axes": [
+    "locus",
+    "phase",
+    "symptom",
+    "root_cause"
+  ],
+  "per_axis": {
+    "locus": {
+      "kappa": 0.5270807345304749,
+      "agreement_count": 428,
+      "agreement_rate": 0.8663967611336032
+    },
+    "phase": {
+      "kappa": 0.466996313057203,
+      "agreement_count": 319,
+      "agreement_rate": 0.645748987854251
+    },
+    "symptom": {
+      "kappa": 0.5245314601703782,
+      "agreement_count": 333,
+      "agreement_rate": 0.6740890688259109
+    },
+    "root_cause": {
+      "kappa": 0.5986918126238681,
+      "agreement_count": 378,
+      "agreement_rate": 0.7651821862348178
+    }
+  },
+  "mean_kappa": 0.5293250800954811,
+  "summary": {
+    "locus": "\u03ba=0.527, agreement=428/494",
+    "phase": "\u03ba=0.467, agreement=319/494",
+    "symptom": "\u03ba=0.525, agreement=333/494",
+    "root_cause": "\u03ba=0.599, agreement=378/494"
+  }
+}
