@@ -149,7 +149,7 @@ git revision under the Hub repo. Loadable via `datasets.load_dataset()`.
 The Agent Reliability Corpus contributors. Contact via the GitHub repo.
 
 **How often will it be updated?**
-Weekly (Monday 07:00 UTC) via GitHub Actions. The curator agent (`agent B`)
+Weekly (Sunday 07:00 UTC) via GitHub Actions, so the snapshot is ready before Monday morning in every timezone. The curator agent (`agent B`)
 runs on demand to propose schema and framework additions.
 
 **Will older versions be retained?**
