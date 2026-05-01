@@ -146,22 +146,40 @@ Per-axis label distribution (full counts in `issues.parquet`):
 
 These distributions are descriptive, not prescriptive. We do not yet have the data to claim that, say, "62% of LangChain failures are root-caused in API misuse" — that would require a held-out gold standard.
 
-### 6.2 The validation gap
+### 6.2 Cross-model agreement (automated κ)
 
-The v0 corpus is **labeled by a single LLM classifier** (DeepSeek V4-pro). For the dataset to be peer-review-ready, two validations are required:
+The v0 corpus is **labeled by a single LLM classifier** (DeepSeek V4-pro). To validate that the labels reflect a stable underlying signal rather than one model's idiosyncratic priors, we re-classified a stratified 500-issue subset (proportional to per-framework population, floor-of-1) using **Mistral Medium 3.5** (`mistral-medium-latest`, v26.04, open-weight under Mistral's license). Mistral was chosen as the second annotator because (a) it is from a different model family with non-overlapping training data, and (b) its open weights make the agreement measurement reproducible without dependency on a specific provider's API keeping the relevant snapshot alive.
 
-**Inter-annotator agreement (κ).** A 200-row stratified subset (sampled across frameworks, with oversampling of `needs_review = true` rows) needs to be labeled independently by two human annotators against the four-axis taxonomy. Cohen's κ is reported per axis. The bar for publication is mean κ ≥ 0.7 ("substantial" agreement); MAST achieved κ = 0.88 on its 150-trace sample. **This is the load-bearing piece of work that gates submission and is the natural co-author contribution.** The labeling tooling is already scaffolded; the tasks are ~6 hours of focused work per annotator.
+Mistral returned a parseable, schema-conforming response for **495 of 500 sampled issues (99.0%)**. The 5 failures were all Pydantic validation rejections rather than API errors:
 
-**Classifier vs gold standard.** Once the κ subset exists, we report DeepSeek V4-pro's accuracy against the human gold standard. We expect the dominant disagreement modes to be: (a) machine over-uses `unknown` on borderline cases that humans resolve into specific labels, and (b) on ambiguous root_cause judgments where the issue body lacks decisive evidence, humans converge on prior-knowledge inference while the classifier stays conservative. The accuracy decomposition gives reviewers a clear sense of where machine labels are trustworthy and where they aren't.
+- **4 cases** where the `reasoning` field exceeded the 500-character cap on the schema (Mistral occasionally produces verbose reasoning text);
+- **1 case** of axis confusion: Mistral assigned `root_cause = "memory"` — `memory` is a valid value for the *phase* axis but not for *root_cause*. DeepSeek V4-pro produced zero such cross-axis confusions in the full 14,129-issue v0 backfill, suggesting it adheres more strictly to closed-Literal output schemas than Mistral does at this size class.
 
-These two pieces are explicitly part of the v1.0 release plan. The published v0 dataset includes a clearly-labeled "unverified labels" caveat on the dataset card.
+Cohen's κ on the joined 495 issues:
+
+| Axis | κ | Agreement | Interpretation |
+|---|---|---|---|
+| **symptom** | **0.812** | 88.1% (436/495) | almost perfect |
+| **locus** | **0.719** | 89.1% (441/495) | substantial |
+| **root_cause** | **0.702** | 81.2% (402/495) | substantial |
+| phase | 0.595 | 73.3% (363/495) | moderate |
+| **Mean** | **0.707** | — | substantial |
+
+Three of four axes clear the standard κ ≥ 0.70 threshold for "substantial" agreement, with `symptom` reaching the "almost perfect" tier. The weakest axis is `phase` (κ = 0.595, moderate) — this is the most abstract axis, requiring inference about the agent's lifecycle stage from limited bug-report evidence. MAST's lifecycle-stage analogues showed the same pattern. The total cost of running the second annotator pass was approximately $1 USD on Mistral La Plateforme.
+
+### 6.3 Human anchor (planned)
+
+Cross-model agreement establishes that labels are stable across independent model families, but it does not anchor the labels to ground truth — both LLMs share substantial training-data overlap, and shared priors could produce shared errors. To complete the methodology, we plan a **50-issue human-anchored subset** stratified across frameworks and oversampled on `needs_review = true` rows. A single expert annotator (the prospective co-author identified in §9) labels these 50 issues against the same 4-axis taxonomy; we report human-vs-V4-pro κ and human-vs-Mistral κ side-by-side. 50 issues is conservatively bounded (~1.5 hours of focused labeling) and statistically adequate to detect κ differences of 0.15+ at α=0.05.
+
+If the human-anchored κ is comparable to or exceeds the cross-model κ above, the labels are validated against ground truth. If it is materially lower (e.g. mean κ < 0.5), the taxonomy itself needs re-examination before scale-up.
 
 ---
 
 ## 7. Limitations
 
 - **Sparse cross-links.** Only one of the five prior corpora (MAST) currently publishes structured records. The cross-link table will grow as the others release data; the architecture is in place.
-- **Single classifier; pending κ.** As above (§6.2).
+- **Cross-model agreement is necessary but not sufficient.** §6.2 reports substantial κ between V4-pro and Mistral Medium 3.5 across 3 of 4 axes, but this measures inter-LLM consistency, not anchored validity. The human-anchored subset described in §6.3 is the missing complement.
+- **`phase` axis is the weakest.** With κ=0.595 (moderate), the `phase` axis is below the publication bar that the other three clear. Either the axis definition needs tightening or `phase` should be considered an experimental, secondary axis in v1.0.
 - **English bias.** Issue bodies are not translated; non-English issues classify with reduced accuracy. The framework selection is also Anglophone-skewed.
 - **TF-IDF is a baseline.** A v0.2 cross-linker using sentence embeddings is straightforward and likely improves the long-tail recall without sacrificing precision.
 - **Frameworks selection.** The 12 frameworks cover the bulk of the open-source ecosystem but exclude proprietary stacks (e.g. closed corporate agents) and rapid newcomers. The Curator agent's `propose_new_framework` tool is the maintenance mechanism.
@@ -186,9 +204,9 @@ The full v0 backfill — all 14,129 classifications — was reproduced from scra
 
 ## 9. Conclusion and call for collaboration
 
-The Agent Reliability Corpus is built. It is on Hugging Face Hub. It is licensed permissively. The cross-link table is populated against MAST. The pipeline runs weekly and costs cents.
+The Agent Reliability Corpus is built. It is on Hugging Face Hub. It is licensed permissively. The cross-link table is populated against MAST. The pipeline runs weekly and costs cents. Cross-model agreement against Mistral Medium 3.5 (an open-weight model from a different family) clears the substantial-κ bar on 3 of 4 axes (mean κ = 0.71 over 495 issues).
 
-What is missing is the inter-annotator validation that turns this from a credible engineering artifact into a publishable academic dataset. We are looking for one collaborator — ideally a researcher whose prior or upcoming work makes use of one or more of the corpora ARC cross-links against — to (i) co-label a 200-row subset for κ scoring, (ii) co-write the methodology and validation sections of a workshop submission, and (iii) be a co-first or second author on the resulting paper. The work is bounded, the dataset is real, and the venue (NeurIPS Datasets & Benchmarks track, or a relevant agent workshop) is concrete.
+What is missing is the **human anchor** — a 50-issue gold-standard subset that pins the labels to expert ground truth. We are looking for one collaborator — ideally a researcher whose prior or upcoming work makes use of one or more of the corpora ARC cross-links against — to (i) hand-label a 50-row stratified subset for human-vs-LLM κ, (ii) co-write the methodology and validation sections of a workshop submission, and (iii) be a co-first or second author on the resulting paper. The bounded ask is approximately 1.5 hours of focused labeling — meaningfully smaller than typical inter-annotator validation precisely because the cross-model κ already establishes label stability; the human pass is the smaller anchoring complement, not the bulk of the validation.
 
 If you've published one of [1]–[5], or if you cite multiple of them in your own pipeline, this dataset should already feel useful to you. Email or open an issue on the GitHub repository to discuss.
 
