@@ -1,51 +1,49 @@
-"""Single-tier agent-failure classifier using DeepSeek V4-pro.
+"""Single-tier agent-failure classifier built on Pydantic AI.
 
-Sends each `RawIssue` to deepseek-v4-pro via the OpenAI-compatible API
-and returns a structured `Classification` via tool calling. Reasoning
-("thinking") mode is explicitly disabled — for a structured tool-call
-classification task, reasoning tokens are pure cost overhead (DeepSeek
-bills them at output rates) and provide no benefit since the output is
-a small, schema-constrained JSON object.
+Every issue is labeled by a single LLM (default: DeepSeek V4-pro) via
+the Pydantic AI `Agent` abstraction. The agent's `output_type` is the
+`Classification` Pydantic model, which Pydantic AI converts to a
+provider-appropriate structured-output mechanism (tool calling on
+OpenAI/DeepSeek/Mistral, JSON mode where tools aren't supported).
+
+Why Pydantic AI rather than the OpenAI SDK directly:
+    Each provider exposes a slightly different "OpenAI-compatible" API
+    surface — Mistral leaves `tool_calls[i].type=None` while OpenAI
+    sets it to `"function"`; OpenAI's GPT-5+ renamed `max_tokens` to
+    `max_completion_tokens` and rejects `temperature` values other
+    than the default; Llama 4 deployments on some providers don't
+    expose tool calling at all. Pydantic AI's per-provider model
+    classes handle these quirks internally so the classification code
+    is the same regardless of who's serving the inference.
 
 Reproducibility choices:
-- Pinned model ID (deepseek-v4-pro) recorded on every row
-- temperature=0 for determinism
-- thinking.type=disabled to suppress reasoning tokens
-- Tool-use with strict `Classification` schema
-- All four versioned fields recorded on the output row
+- Pinned model ID recorded on every output row.
+- Optional `extra_body` / temperature toggles for provider-specific
+  settings (DeepSeek V4-pro thinking-disabled, etc.).
+- Tool-use / structured-output enforced via the `Classification`
+  Pydantic model.
 
-Cost control via DeepSeek's automatic prefix caching:
-- The taxonomy block (~3.6KB, byte-identical across calls) sits at the
-  start of every prompt, so DeepSeek's automatic prefix cache detects
-  the shared prefix and bills the cached portion at ~50× discount on
-  cache hits. There is no `cache_control` marker to set; caching is
-  implicit.
-- Only the issue text varies per call.
-- Reasoning is disabled, so output tokens are bounded to the tool-call
-  payload (~200 tokens per call).
-
-Why the OpenAI SDK, not a DeepSeek-specific client:
-- DeepSeek exposes an OpenAI-compatible Chat Completions API at
-  https://api.deepseek.com. Using the `openai` SDK with a custom
-  base_url keeps the classifier provider-agnostic — swapping in any
-  OpenAI-compatible backend (Mistral, Together, OpenRouter, a local
-  vLLM server, etc.) is a one-line base_url change.
+Cost control via prefix caching:
+- The taxonomy block (~3.6KB, byte-identical across calls) sits at
+  the start of every system prompt. Every major provider's prefix
+  cache picks this up automatically when calls happen within their
+  respective TTL windows.
 """
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import structlog
-from openai import OpenAI
-from openai.types.chat import (
-    ChatCompletionToolChoiceOptionParam,
-    ChatCompletionToolUnionParam,
-)
+from pydantic_ai import Agent
+from pydantic_ai.models.mistral import MistralModel
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.mistral import MistralProvider
+from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.settings import ModelSettings
 
 from agentfail import __version__
 from agentfail.schema import Classification, ClassifiedIssue, ClassifierTier, RawIssue
@@ -57,33 +55,6 @@ log = structlog.get_logger(__name__)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 MODEL_V4_PRO = "deepseek-v4-pro"
-
-# --- Tool definition ----------------------------------------------------
-
-_TOOL_NAME = "classify_failure"
-
-# Derive the tool's parameter schema from the Pydantic model so any schema
-# change flows through automatically. `additionalProperties=False` keeps
-# the classifier from inventing fields outside the closed-Literal axes.
-_CLASSIFICATION_SCHEMA: dict[str, Any] = Classification.model_json_schema()
-_CLASSIFICATION_SCHEMA["additionalProperties"] = False
-
-_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": _TOOL_NAME,
-        "description": (
-            "Return your classification of the GitHub issue against the "
-            "unified agent-failure taxonomy."
-        ),
-        "parameters": _CLASSIFICATION_SCHEMA,
-    },
-}
-
-_TOOL_CHOICE: dict[str, Any] = {
-    "type": "function",
-    "function": {"name": _TOOL_NAME},
-}
 
 # Static directive appended after the (cacheable) taxonomy block.
 _DIRECTIVE = (
@@ -101,11 +72,11 @@ class ClassifierResult:
 
 
 class Classifier:
-    """Single-tier classifier hitting DeepSeek V4-pro through the OpenAI SDK.
+    """Pydantic-AI-backed single-tier classifier.
 
-    Constructed once per pipeline run; caches the OpenAI client and the
+    Constructed once per pipeline run; caches the agent and the
     rendered taxonomy block so the system message stays byte-identical
-    across calls (which is what DeepSeek's automatic prefix cache keys
+    across calls (which is what every provider's prefix cache keys
     off of).
     """
 
@@ -117,28 +88,46 @@ class Classifier:
         model: str = MODEL_V4_PRO,
         base_url: str = DEEPSEEK_BASE_URL,
         extra_body: dict[str, Any] | None = None,
-        use_max_completion_tokens: bool = False,
         omit_temperature: bool = False,
+        max_tokens: int | None = None,
+        provider_kind: str | None = None,
     ) -> None:
-        """Construct an OpenAI-SDK-compatible classifier.
+        """Construct a classifier.
 
         Args:
-            api_key: explicit API key; if None, falls back to the env var
+            api_key: explicit API key; if None, falls back to env var
                 named by `api_key_env`.
-            api_key_env: env var name to read when `api_key` is None.
-                Default is `DEEPSEEK_API_KEY` to match the primary
-                pipeline. Set to `MISTRAL_API_KEY`, `OPENAI_API_KEY`,
-                etc. when targeting a different provider for relabel /
-                kappa runs.
-            model: pinned model ID, recorded on every output row.
-            base_url: OpenAI-compatible endpoint. DeepSeek default;
-                point at any other compatible provider for cross-model
-                evaluation.
-            extra_body: provider-specific request kwargs passed through
-                the OpenAI SDK's `extra_body`. DeepSeek V4-pro needs
-                `{"thinking": {"type": "disabled"}}` to suppress
-                reasoning tokens; Mistral / OpenAI / Gemini don't have
-                that toggle, so leave None for them.
+            api_key_env: env var holding the API key. Defaults to
+                `DEEPSEEK_API_KEY` for the primary pipeline. Use
+                `OPENAI_API_KEY`, `MISTRAL_API_KEY`, etc. for relabel
+                / kappa runs against other providers.
+            model: pinned model ID. Recorded on every output row.
+            base_url: OpenAI-compatible chat-completions endpoint.
+                Default DeepSeek's. Set to `https://api.openai.com/v1`,
+                `https://api.mistral.ai/v1`, etc. for other providers.
+            extra_body: provider-specific request kwargs. DeepSeek
+                V4-pro takes `{"thinking": {"type": "disabled"}}` to
+                suppress reasoning tokens. Other providers reject
+                unknown keys; leave None for them.
+            omit_temperature: skip the `temperature` setting entirely.
+                Required for GPT-5.x and o-series models, which only
+                accept the default `1.0`.
+            max_tokens: optional cap per response. Default None — the
+                Classification schema bounds output to a small
+                structured payload, so a max_tokens cap is mostly
+                redundant. Pydantic AI translates `max_tokens` to
+                `max_completion_tokens` on every OpenAI-compatible
+                provider, but Mistral's "OpenAI-compatible" endpoint
+                rejects `max_completion_tokens` as an unknown param —
+                so we leave it unset by default to keep the
+                cross-provider invariant.
+            provider_kind: which Pydantic AI provider integration to
+                use. `"openai"` (default for OpenAI / DeepSeek / any
+                OpenAI-Chat-Completions-shaped endpoint) or
+                `"mistral"` (uses Mistral's native API, which handles
+                their tool-call response shape correctly — the
+                `type=None` case OpenAI-compat clients can't parse).
+                If None, inferred from base_url.
         """
         key = api_key or os.environ.get(api_key_env)
         if not key:
@@ -146,86 +135,81 @@ class Classifier:
                 f"{api_key_env} is required. Set it in the environment or "
                 "pass api_key=... to Classifier()."
             )
-        self._client = OpenAI(api_key=key, base_url=base_url)
+
+        # Auto-detect provider kind from base_url if not specified.
+        # Mistral's API needs MistralModel because its tool-call
+        # response shape (`type=None`) doesn't validate against the
+        # OpenAI SDK's strict pydantic schema.
+        if provider_kind is None:
+            provider_kind = "mistral" if "mistral.ai" in base_url else "openai"
+
+        settings_kwargs: dict[str, Any] = {}
+        if max_tokens is not None:
+            settings_kwargs["max_tokens"] = max_tokens
+        if not omit_temperature:
+            settings_kwargs["temperature"] = 0
+        if extra_body:
+            settings_kwargs["extra_body"] = extra_body
+        settings = ModelSettings(**settings_kwargs) if settings_kwargs else None
+
+        # Pydantic AI's per-provider Model classes type their first arg
+        # as a Literal of known model names. Our model IDs are runtime
+        # strings — may be valid but pyright can't prove it statically.
+        pydantic_model: OpenAIChatModel | MistralModel
+        if provider_kind == "mistral":
+            # MistralProvider wraps the official `mistralai` SDK, which
+            # has its own base_url defaulting to `https://api.mistral.ai`
+            # and appends paths internally. Passing our OpenAI-compat
+            # `https://api.mistral.ai/v1` causes path duplication and a
+            # 404 — so we don't forward base_url to MistralProvider.
+            pydantic_model = MistralModel(
+                cast(Any, model),
+                provider=MistralProvider(api_key=key),
+            )
+        else:
+            pydantic_model = cast(
+                OpenAIChatModel,
+                OpenAIChatModel(
+                    cast(Any, model),
+                    provider=OpenAIProvider(base_url=base_url, api_key=key),
+                ),
+            )
+
+        # Build the system prompt once. Taxonomy block first (the
+        # cacheable prefix), directive last. Reordering would defeat
+        # every provider's prefix cache silently.
+        system_prompt = render_taxonomy_for_prompt() + "\n\n---\n\n" + _DIRECTIVE
+
+        self._agent: Agent[None, Classification] = Agent(
+            model=pydantic_model,
+            output_type=Classification,
+            system_prompt=system_prompt,
+            model_settings=settings,
+            retries=2,
+        )
         self._model = model
-        self._extra_body = extra_body
-        # OpenAI's GPT-5/o-series APIs renamed `max_tokens` to
-        # `max_completion_tokens` and reject the old name. DeepSeek and
-        # Mistral still use `max_tokens`. Set this True when targeting
-        # GPT-5.x or newer OpenAI reasoning-class models.
-        self._use_max_completion_tokens = use_max_completion_tokens
-        # Reasoning-class OpenAI models (GPT-5+, o-series) also reject
-        # `temperature` (any value other than the default 1.0) — they
-        # handle exploration internally. Set True for those.
-        self._omit_temperature = omit_temperature
-        # Build the system message once. Taxonomy block first (the cacheable
-        # prefix), directive last. Reordering kills cache hits silently.
-        self._system_content = render_taxonomy_for_prompt() + "\n\n---\n\n" + _DIRECTIVE
 
     # --- Single classification call -------------------------------------
 
     def _call(self, issue: RawIssue) -> Classification:
-        request_kwargs: dict[str, Any] = {
-            "model": self._model,
-            "messages": [
-                {"role": "system", "content": self._system_content},
-                {"role": "user", "content": _render_issue_for_classification(issue)},
-            ],
-            "tools": [cast(ChatCompletionToolUnionParam, _TOOL)],
-            "tool_choice": cast(ChatCompletionToolChoiceOptionParam, _TOOL_CHOICE),
-        }
-        if not self._omit_temperature:
-            request_kwargs["temperature"] = 0
-        if self._use_max_completion_tokens:
-            request_kwargs["max_completion_tokens"] = 1024
-        else:
-            request_kwargs["max_tokens"] = 1024
-        if self._extra_body is not None:
-            # Provider-specific kwargs (e.g. DeepSeek's thinking toggle).
-            # Mistral / OpenAI / Gemini reject unknown keys, so we only
-            # pass extra_body when explicitly configured.
-            request_kwargs["extra_body"] = self._extra_body
-        response = self._client.chat.completions.create(**request_kwargs)
+        result = self._agent.run_sync(_render_issue_for_classification(issue))
 
-        # Log token usage so cost is visible per call. DeepSeek's response.usage
-        # follows the OpenAI shape; provider-specific fields (cached tokens,
-        # reasoning tokens) live under model_extra and are surfaced if present.
-        usage = response.usage
-        if usage is not None:
-            extra = getattr(usage, "model_extra", None) or {}
-            log.info(
-                "classify.usage",
-                node_id=issue.node_id,
-                prompt_tokens=usage.prompt_tokens,
-                completion_tokens=usage.completion_tokens,
-                total_tokens=usage.total_tokens,
-                # DeepSeek-specific: prompt_cache_hit_tokens, prompt_cache_miss_tokens
-                cache_hit_tokens=extra.get("prompt_cache_hit_tokens"),
-                cache_miss_tokens=extra.get("prompt_cache_miss_tokens"),
-                # Reasoning-token counters (some providers expose these)
-                completion_tokens_details=getattr(usage, "completion_tokens_details", None),
-            )
-
-        choice = response.choices[0]
-        tool_calls = choice.message.tool_calls or []
-        for call in tool_calls:
-            # openai 2.x distinguishes function tool calls from "custom" tool
-            # calls. Different providers populate the discriminator field
-            # differently — OpenAI sets `type="function"`, Mistral leaves
-            # `type=None` while still returning a valid function tool call.
-            # The reliable test is whether the `.function` attribute is
-            # present and populated.
-            fn = getattr(call, "function", None)
-            if fn is None:
-                continue
-            if fn.name == _TOOL_NAME:
-                return Classification.model_validate(json.loads(fn.arguments))
-
-        raise RuntimeError(
-            f"Classifier response from {self._model} did not contain a "
-            f"{_TOOL_NAME} tool call. finish_reason={choice.finish_reason}, "
-            f"message={choice.message!r}"
+        # Log token usage when the provider exposes it. Pydantic AI's
+        # Usage object exposes `request_tokens`, `response_tokens`,
+        # `total_tokens`. Provider-specific extras (DeepSeek's
+        # cache_hit_tokens, etc.) are in `usage.details`.
+        usage = result.usage()
+        details = usage.details or {}
+        log.info(
+            "classify.usage",
+            node_id=issue.node_id,
+            prompt_tokens=usage.input_tokens,
+            completion_tokens=usage.output_tokens,
+            total_tokens=usage.total_tokens,
+            cache_hit_tokens=details.get("prompt_cache_hit_tokens"),
+            cache_miss_tokens=details.get("prompt_cache_miss_tokens"),
         )
+        return result.output
 
     # --- Public surface --------------------------------------------------
 

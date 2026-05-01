@@ -8,8 +8,9 @@ license = { text = "MIT" }
 authors = [{ name = "Agent Reliability Corpus contributors" }]
 dependencies = [
     "openai>=1.50.0",
+    "mistralai>=1.0.0",  # used by pydantic-ai's MistralProvider
     "pydantic>=2.9.0",
-    "pydantic-ai>=0.0.14",
+    "pydantic-ai>=1.0.0",
     "polars>=1.10.0",
     "duckdb>=1.1.0",
     "datasets>=3.0.0",
