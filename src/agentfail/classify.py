@@ -117,6 +117,8 @@ class Classifier:
         model: str = MODEL_V4_PRO,
         base_url: str = DEEPSEEK_BASE_URL,
         extra_body: dict[str, Any] | None = None,
+        use_max_completion_tokens: bool = False,
+        omit_temperature: bool = False,
     ) -> None:
         """Construct an OpenAI-SDK-compatible classifier.
 
@@ -147,6 +149,15 @@ class Classifier:
         self._client = OpenAI(api_key=key, base_url=base_url)
         self._model = model
         self._extra_body = extra_body
+        # OpenAI's GPT-5/o-series APIs renamed `max_tokens` to
+        # `max_completion_tokens` and reject the old name. DeepSeek and
+        # Mistral still use `max_tokens`. Set this True when targeting
+        # GPT-5.x or newer OpenAI reasoning-class models.
+        self._use_max_completion_tokens = use_max_completion_tokens
+        # Reasoning-class OpenAI models (GPT-5+, o-series) also reject
+        # `temperature` (any value other than the default 1.0) — they
+        # handle exploration internally. Set True for those.
+        self._omit_temperature = omit_temperature
         # Build the system message once. Taxonomy block first (the cacheable
         # prefix), directive last. Reordering kills cache hits silently.
         self._system_content = render_taxonomy_for_prompt() + "\n\n---\n\n" + _DIRECTIVE
@@ -162,9 +173,13 @@ class Classifier:
             ],
             "tools": [cast(ChatCompletionToolUnionParam, _TOOL)],
             "tool_choice": cast(ChatCompletionToolChoiceOptionParam, _TOOL_CHOICE),
-            "temperature": 0,
-            "max_tokens": 1024,
         }
+        if not self._omit_temperature:
+            request_kwargs["temperature"] = 0
+        if self._use_max_completion_tokens:
+            request_kwargs["max_completion_tokens"] = 1024
+        else:
+            request_kwargs["max_tokens"] = 1024
         if self._extra_body is not None:
             # Provider-specific kwargs (e.g. DeepSeek's thinking toggle).
             # Mistral / OpenAI / Gemini reject unknown keys, so we only

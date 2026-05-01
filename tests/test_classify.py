@@ -102,6 +102,8 @@ def _classifier_with_fakes(
     c._client = _FakeOpenAIClient(chat=_FakeChat(completions=fake_completions))  # type: ignore[attr-defined]
     c._model = model  # type: ignore[attr-defined]
     c._extra_body = extra_body  # type: ignore[attr-defined]
+    c._use_max_completion_tokens = False  # type: ignore[attr-defined]
+    c._omit_temperature = False  # type: ignore[attr-defined]
     from agentfail.taxonomy import render_taxonomy_for_prompt
 
     # Mirror the system-content build in __init__ so tests see the same

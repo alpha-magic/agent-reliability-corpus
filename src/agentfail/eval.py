@@ -365,6 +365,22 @@ def relabel_main() -> None:
         ),
     )
     parser.add_argument(
+        "--use-max-completion-tokens",
+        action="store_true",
+        help=(
+            "Use OpenAI's newer `max_completion_tokens` parameter instead "
+            "of the legacy `max_tokens`. Required for GPT-5.x and o-series."
+        ),
+    )
+    parser.add_argument(
+        "--omit-temperature",
+        action="store_true",
+        help=(
+            "Don't send `temperature` at all. Required for GPT-5.x and "
+            "o-series, which only accept the default temperature."
+        ),
+    )
+    parser.add_argument(
         "--sample-size",
         type=int,
         default=1500,
@@ -387,6 +403,8 @@ def relabel_main() -> None:
         base_url=args.base_url,
         api_key_env=args.api_key_env,
         extra_body=extra_body,
+        use_max_completion_tokens=args.use_max_completion_tokens,
+        omit_temperature=args.omit_temperature,
     )
     relabel(
         issues_parquet=args.issues_parquet,
