@@ -99,10 +99,12 @@ def test_push_to_hub_includes_empty_cross_links(tmp_path: Path, monkeypatch) -> 
     ).write_parquet(snapshot_dir / "taxonomy.parquet")
     _write_empty_cross_links(snapshot_dir)
 
-    pushed_configs: list[tuple[str, int]] = []
+    pushes: list[dict] = []
 
-    def fake_push(self, *, repo_id, config_name, revision, token, private):
-        pushed_configs.append((config_name, len(self)))
+    def fake_push(self, **kwargs):
+        pushes.append(
+            {"config": kwargs["config_name"], "revision": kwargs.get("revision"), "rows": len(self)}
+        )
 
     monkeypatch.setattr(Dataset, "push_to_hub", fake_push)
 
@@ -113,7 +115,85 @@ def test_push_to_hub_includes_empty_cross_links(tmp_path: Path, monkeypatch) -> 
         revision="2026-W18",
     )
 
-    pushed_by_config = dict(pushed_configs)
-    assert "cross_links" in pushed_by_config, "empty cross_links must still be pushed"
-    assert pushed_by_config["cross_links"] == 0
-    assert pushed_by_config["issues"] == 1
+    # Hybrid pattern: each of the 4 configs gets pushed twice — once to the
+    # revision branch (paper-citable), once to main (default-branch UX).
+    assert len(pushes) == 8
+
+    rev_pushes = [p for p in pushes if p["revision"] == "2026-W18"]
+    main_pushes = [p for p in pushes if p["revision"] is None]
+    assert len(rev_pushes) == 4
+    assert len(main_pushes) == 4
+
+    # cross_links (empty) is included in both push sets.
+    rev_configs = {p["config"]: p["rows"] for p in rev_pushes}
+    main_configs = {p["config"]: p["rows"] for p in main_pushes}
+    assert rev_configs["cross_links"] == 0
+    assert main_configs["cross_links"] == 0
+    assert rev_configs["issues"] == 1
+    assert main_configs["issues"] == 1
+
+
+def test_push_to_hub_skip_main_when_disabled(tmp_path: Path, monkeypatch) -> None:
+    """`also_push_to_main=False` should only push to the revision branch.
+
+    Useful for ad-hoc backfill runs that shouldn't displace the current
+    'latest' on the dataset page.
+    """
+    snapshot_dir = tmp_path / "2026-W18"
+    snapshot_dir.mkdir()
+    _write_empty_cross_links(snapshot_dir)
+    pl.DataFrame(
+        [{"slug": "x", "repo": "x/x", "display_name": "X", "homepage": None}]
+    ).write_parquet(snapshot_dir / "frameworks.parquet")
+    pl.DataFrame(
+        [{"axis": "locus", "label": "framework", "definition": "d", "derived_from": ["mast"]}]
+    ).write_parquet(snapshot_dir / "taxonomy.parquet")
+    pl.DataFrame(
+        [
+            {
+                "framework_slug": "x",
+                "issue_number": 1,
+                "node_id": "n1",
+                "title": "t",
+                "body": None,
+                "url": "u",
+                "labels": ["bug"],
+                "state": "open",
+                "is_pull_request": False,
+                "created_at": None,
+                "updated_at": None,
+                "closed_at": None,
+                "comment_count": 0,
+                "locus": "framework",
+                "phase": "action",
+                "symptom": "crash",
+                "root_cause": "api_misuse",
+                "confidence": 0.9,
+                "reasoning": "r",
+                "needs_review": False,
+                "classifier_tier": "v4_pro",
+                "classifier_model": "deepseek-v4-pro",
+                "classifier_version": "0.1.0",
+                "classified_at": None,
+            }
+        ]
+    ).write_parquet(snapshot_dir / "issues.parquet")
+
+    pushes: list[dict] = []
+
+    def fake_push(self, **kwargs):
+        pushes.append({"revision": kwargs.get("revision")})
+
+    monkeypatch.setattr(Dataset, "push_to_hub", fake_push)
+
+    push_to_hub(
+        snapshot_dir,
+        repo_id="user/agent-reliability-corpus",
+        hf_token="fake-token",
+        revision="2026-W18",
+        also_push_to_main=False,
+    )
+
+    # Only revisioned pushes; nothing to main.
+    assert len(pushes) == 4
+    assert all(p["revision"] == "2026-W18" for p in pushes)

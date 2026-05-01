@@ -208,9 +208,20 @@ def push_to_hub(
     hf_token: str | None = None,
     revision: str | None = None,
     private: bool = False,
+    also_push_to_main: bool = True,
 ) -> None:
     """Push every config under snapshot_dir to the HF Hub as a multi-config
     dataset. Each config becomes a loadable config_name on the dataset page.
+
+    Each snapshot is pushed twice by default:
+      1. To its revision branch (e.g. `2026-W18`) — preserved forever, the
+         citable identity of that snapshot. Papers point at this.
+      2. To `main` — the default branch the dataset page renders, what
+         casual `load_dataset(repo_id, config)` calls return without a
+         revision argument.
+
+    Set `also_push_to_main=False` to skip step 2 (e.g. for ad-hoc back-fills
+    that shouldn't displace the current latest).
 
     Requires `HF_TOKEN` (or the `hf_token` argument). No-op if the snapshot
     directory contains no parquet files.
@@ -242,6 +253,8 @@ def push_to_hub(
         # without complaint.
         table = pq.read_table(str(parquet_path))
         ds = Dataset(table)
+
+        # 1. Revisioned push (citable, never overwritten).
         ds.push_to_hub(
             repo_id=repo_id,
             config_name=config_name,
@@ -256,3 +269,19 @@ def push_to_hub(
             revision=rev,
             rows=len(ds),
         )
+
+        # 2. Main push (so the dataset page shows latest data by default).
+        if also_push_to_main:
+            ds.push_to_hub(
+                repo_id=repo_id,
+                config_name=config_name,
+                token=token,
+                private=private,
+            )
+            log.info(
+                "publish.pushed_config",
+                repo_id=repo_id,
+                config=config_name,
+                revision="main",
+                rows=len(ds),
+            )
