@@ -195,12 +195,16 @@ class Classifier:
         tool_calls = choice.message.tool_calls or []
         for call in tool_calls:
             # openai 2.x distinguishes function tool calls from "custom" tool
-            # calls; we only ever request function tools, but the union type
-            # forces us to type-narrow before reaching .function.
-            if call.type != "function":
+            # calls. Different providers populate the discriminator field
+            # differently — OpenAI sets `type="function"`, Mistral leaves
+            # `type=None` while still returning a valid function tool call.
+            # The reliable test is whether the `.function` attribute is
+            # present and populated.
+            fn = getattr(call, "function", None)
+            if fn is None:
                 continue
-            if call.function.name == _TOOL_NAME:
-                return Classification.model_validate(json.loads(call.function.arguments))
+            if fn.name == _TOOL_NAME:
+                return Classification.model_validate(json.loads(fn.arguments))
 
         raise RuntimeError(
             f"Classifier response from {self._model} did not contain a "
