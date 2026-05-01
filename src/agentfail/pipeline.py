@@ -126,7 +126,11 @@ def run(
     classified: list[ClassifiedIssue] = []
     classifier: Classifier | None = None
     if not dry_run_classifier:
-        classifier = Classifier()
+        # Default classifier targets DeepSeek V4-pro; pass the provider-
+        # specific thinking-disabled toggle here rather than baking it
+        # into Classifier defaults (so cross-model relabel runs against
+        # other providers don't ship the wrong extra_body).
+        classifier = Classifier(extra_body={"thinking": {"type": "disabled"}})
 
     with GitHubClient() as github:
         for framework in frameworks_to_run:

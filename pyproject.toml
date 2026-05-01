@@ -33,6 +33,8 @@ dev = [
 arc-pipeline = "agentfail.pipeline:main"
 arc-curator = "agentfail.curator:main"
 arc-merge-shards = "agentfail.merge:main"
+arc-relabel = "agentfail.eval:relabel_main"
+arc-kappa = "agentfail.eval:kappa_main"
 
 [build-system]
 requires = ["hatchling"]

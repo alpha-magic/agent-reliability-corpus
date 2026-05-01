@@ -92,12 +92,16 @@ class _FakeOpenAIClient:
 
 def _classifier_with_fakes(
     responses: list[Classification],
+    *,
+    extra_body: dict | None = None,
+    model: str = MODEL_V4_PRO,
 ) -> tuple[Classifier, _FakeChatCompletions]:
     """Build a Classifier whose OpenAI client is replaced with a fake."""
     c = Classifier.__new__(Classifier)  # bypass __init__ (needs API key)
     fake_completions = _FakeChatCompletions(responses=list(responses))
     c._client = _FakeOpenAIClient(chat=_FakeChat(completions=fake_completions))  # type: ignore[attr-defined]
-    c._model = MODEL_V4_PRO  # type: ignore[attr-defined]
+    c._model = model  # type: ignore[attr-defined]
+    c._extra_body = extra_body  # type: ignore[attr-defined]
     from agentfail.taxonomy import render_taxonomy_for_prompt
 
     # Mirror the system-content build in __init__ so tests see the same
@@ -158,12 +162,23 @@ def test_classify_accepts_low_confidence_output(raw_issue):
 # --- Request-shape tests ------------------------------------------------
 
 
-def test_request_disables_thinking_mode(raw_issue):
-    """Reasoning tokens must be suppressed for cost control."""
-    c, fake = _classifier_with_fakes([_make_classification(confidence=0.9)])
+def test_request_passes_extra_body_when_configured(raw_issue):
+    """Provider-specific request kwargs (e.g. DeepSeek's thinking-disabled
+    toggle) should pass through when set on the Classifier; for providers
+    that don't accept them (Mistral, OpenAI, Gemini), the kwarg should be
+    omitted from the request entirely so the API doesn't reject it."""
+    # With extra_body configured (the DeepSeek pipeline default).
+    c, fake = _classifier_with_fakes(
+        [_make_classification(confidence=0.9)],
+        extra_body={"thinking": {"type": "disabled"}},
+    )
     c.classify(raw_issue)
-    sent = fake.calls[0]
-    assert sent["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert fake.calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+
+    # Without extra_body (relabel runs against Mistral/OpenAI/Gemini).
+    c2, fake2 = _classifier_with_fakes([_make_classification(confidence=0.9)])
+    c2.classify(raw_issue)
+    assert "extra_body" not in fake2.calls[0]
 
 
 def test_request_uses_temperature_zero(raw_issue):

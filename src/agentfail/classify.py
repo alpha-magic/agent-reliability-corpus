@@ -113,17 +113,40 @@ class Classifier:
         self,
         *,
         api_key: str | None = None,
+        api_key_env: str = "DEEPSEEK_API_KEY",
         model: str = MODEL_V4_PRO,
         base_url: str = DEEPSEEK_BASE_URL,
+        extra_body: dict[str, Any] | None = None,
     ) -> None:
-        key = api_key or os.environ.get("DEEPSEEK_API_KEY")
+        """Construct an OpenAI-SDK-compatible classifier.
+
+        Args:
+            api_key: explicit API key; if None, falls back to the env var
+                named by `api_key_env`.
+            api_key_env: env var name to read when `api_key` is None.
+                Default is `DEEPSEEK_API_KEY` to match the primary
+                pipeline. Set to `MISTRAL_API_KEY`, `OPENAI_API_KEY`,
+                etc. when targeting a different provider for relabel /
+                kappa runs.
+            model: pinned model ID, recorded on every output row.
+            base_url: OpenAI-compatible endpoint. DeepSeek default;
+                point at any other compatible provider for cross-model
+                evaluation.
+            extra_body: provider-specific request kwargs passed through
+                the OpenAI SDK's `extra_body`. DeepSeek V4-pro needs
+                `{"thinking": {"type": "disabled"}}` to suppress
+                reasoning tokens; Mistral / OpenAI / Gemini don't have
+                that toggle, so leave None for them.
+        """
+        key = api_key or os.environ.get(api_key_env)
         if not key:
             raise RuntimeError(
-                "DEEPSEEK_API_KEY is required. Set it in the environment or "
+                f"{api_key_env} is required. Set it in the environment or "
                 "pass api_key=... to Classifier()."
             )
         self._client = OpenAI(api_key=key, base_url=base_url)
         self._model = model
+        self._extra_body = extra_body
         # Build the system message once. Taxonomy block first (the cacheable
         # prefix), directive last. Reordering kills cache hits silently.
         self._system_content = render_taxonomy_for_prompt() + "\n\n---\n\n" + _DIRECTIVE
@@ -131,21 +154,23 @@ class Classifier:
     # --- Single classification call -------------------------------------
 
     def _call(self, issue: RawIssue) -> Classification:
-        response = self._client.chat.completions.create(
-            model=self._model,
-            messages=[
+        request_kwargs: dict[str, Any] = {
+            "model": self._model,
+            "messages": [
                 {"role": "system", "content": self._system_content},
                 {"role": "user", "content": _render_issue_for_classification(issue)},
             ],
-            tools=[cast(ChatCompletionToolUnionParam, _TOOL)],
-            tool_choice=cast(ChatCompletionToolChoiceOptionParam, _TOOL_CHOICE),
-            temperature=0,
-            max_tokens=1024,
-            # Disable reasoning tokens — V4-pro defaults to thinking mode,
-            # which would emit hundreds of reasoning tokens billed at output
-            # rates. For a structured tool-call task we don't need them.
-            extra_body={"thinking": {"type": "disabled"}},
-        )
+            "tools": [cast(ChatCompletionToolUnionParam, _TOOL)],
+            "tool_choice": cast(ChatCompletionToolChoiceOptionParam, _TOOL_CHOICE),
+            "temperature": 0,
+            "max_tokens": 1024,
+        }
+        if self._extra_body is not None:
+            # Provider-specific kwargs (e.g. DeepSeek's thinking toggle).
+            # Mistral / OpenAI / Gemini reject unknown keys, so we only
+            # pass extra_body when explicitly configured.
+            request_kwargs["extra_body"] = self._extra_body
+        response = self._client.chat.completions.create(**request_kwargs)
 
         # Log token usage so cost is visible per call. DeepSeek's response.usage
         # follows the OpenAI shape; provider-specific fields (cached tokens,
