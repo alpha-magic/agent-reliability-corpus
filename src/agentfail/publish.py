@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import polars as pl
+import pyarrow.parquet as pq
 import structlog
 from datasets import Dataset
 
@@ -233,7 +234,14 @@ def push_to_hub(
         if not parquet_path.exists():
             log.warning("publish.missing_config", config=config_name, path=str(parquet_path))
             continue
-        ds = Dataset.from_parquet(str(parquet_path))
+        # Construct via pyarrow.Table rather than Dataset.from_parquet:
+        # the latter routes through ParquetBuilder, which raises
+        # `Instruction "train" corresponds to no data!` on 0-row files
+        # (cross_links is intentionally empty in v0). Building from an
+        # arrow Table preserves the schema and handles empty configs
+        # without complaint.
+        table = pq.read_table(str(parquet_path))
+        ds = Dataset(table)
         ds.push_to_hub(
             repo_id=repo_id,
             config_name=config_name,
