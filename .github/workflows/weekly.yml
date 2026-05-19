@@ -2,11 +2,10 @@ name: weekly-pipeline
 
 on:
   schedule:
-    # Sundays 07:00 UTC — runs over the weekend so the snapshot is ready
-    # before Monday morning in every timezone (Tokyo Sun 16:00, Berlin Sun
-    # 08:00, NYC Sun 02:00). Monday 07:00 UTC would land mid-workday in
-    # East Asia, where data is most likely to be consumed first thing.
-    - cron: "0 7 * * 0"
+    # Tuesdays 20:00 UTC (22:00 CEST). Evening-of-author timezone so a
+    # human is awake when the run lands and can react to any failure
+    # before the next-day workflow window.
+    - cron: "0 20 * * 2"
   workflow_dispatch:
     inputs:
       max_per_framework:
@@ -65,7 +64,11 @@ jobs:
         run: |
           git config user.name "arc-bot"
           git config user.email "bot@agent-reliability-corpus.local"
-          git add data/pipeline_state.json
+          # data/ is in .gitignore (local scratch dir for snapshots), but
+          # pipeline_state.json is tracked-on-purpose — modern git exits 1
+          # on `git add` for paths under an ignored dir even when the file
+          # itself is tracked, so we force-add this specific file.
+          git add -f data/pipeline_state.json
           if ! git diff --cached --quiet; then
             git commit -m "chore: update pipeline state ($(date -u +%Y-%m-%d))"
             git push
