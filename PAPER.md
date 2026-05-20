@@ -9,7 +9,7 @@
 
 ## Abstract
 
-Research on LLM-agent reliability has produced at least five recent academic corpora — MAST [1], AgentFail [2], Agent Error Benchmark [3], Characterizing Faults in Agentic AI [4], and the Framework Bugs Study [5] — each with its own taxonomy and a one-shot snapshot of failures. Cross-corpus comparison and longitudinal analysis are nearly impossible: the taxonomies don't align, the records don't link, and every follow-up paper rebuilds its evaluation set from scratch. We present the **Agent Reliability Corpus (ARC)**, a continuously-mined dataset of 14,129 classified GitHub issues from 12 LLM-agent frameworks, labeled against a unified four-axis taxonomy (*locus*, *phase*, *symptom*, *root cause*) synthesized from the five prior corpora with explicit derivation provenance on every label. ARC ships full reproducibility metadata on every row, costs ~$0.0002 per classification thanks to provider-side prefix caching, and includes a TF-IDF cross-link table from each ARC issue to records in MAST. A weekly fan-out-then-merge GitHub Actions workflow runs each Tuesday at 20:00 UTC, extending the corpus and publishing a new versioned revision to the Hugging Face Hub. We are seeking a co-author for the inter-annotator validation step described in §6.
+Research on LLM-agent reliability has produced at least five recent academic corpora — MAST [1], AgentFail [2], Agent Error Benchmark [3], Characterizing Faults in Agentic AI [4], and the Framework Bugs Study [5] — each with its own taxonomy and a one-shot snapshot of failures. Cross-corpus comparison and longitudinal analysis are nearly impossible: the taxonomies don't align, the records don't link, and every follow-up paper rebuilds its evaluation set from scratch. We present the **Agent Reliability Corpus (ARC)**, a continuously-mined dataset of 14,487 classified GitHub issues from 12 LLM-agent frameworks (revision `2026-W21`), labeled against a unified four-axis taxonomy (*locus*, *phase*, *symptom*, *root cause*) synthesized from the five prior corpora with explicit derivation provenance on every label. ARC ships full reproducibility metadata on every row, costs ~$0.0002 per classification thanks to provider-side prefix caching, and includes a TF-IDF cross-link table from each ARC issue to records in MAST. A weekly fan-out-then-merge GitHub Actions workflow runs each Tuesday at 20:00 UTC, extending the corpus and publishing a new versioned revision to the Hugging Face Hub. We are seeking a co-author for the inter-annotator validation step described in §6.
 
 ---
 
@@ -32,7 +32,7 @@ The Agent Reliability Corpus exists to be the canonical, continuously-updated, c
 **Contributions.**
 
 1. A unified 4-axis 28-label taxonomy synthesized from the five prior corpora, with each label tagged by which prior paper it derives from (the `derived_from` column on `taxonomy.parquet`).
-2. 14,129 classified GitHub issues across 12 LLM-agent frameworks (`agno`, `autogen`, `autogpt`, `crewai`, `langchain`, `langgraph`, `letta`, `llamaindex`, `mastra`, `semantic_kernel`, `smolagents`, `swarm`), with full reproducibility metadata (pinned model ID, classifier version, classification timestamp) on every row.
+2. 14,487 classified GitHub issues across 12 LLM-agent frameworks (`agno`, `autogen`, `autogpt`, `crewai`, `langchain`, `langgraph`, `letta`, `llamaindex`, `mastra`, `semantic_kernel`, `smolagents`, `swarm`) as of revision `2026-W21`, with full reproducibility metadata (pinned model ID, classifier version, classification timestamp) on every row.
 3. A TF-IDF + cosine cross-link table from ARC issues to records in MAST (the only prior corpus that publishes its underlying records as a structured public dataset at time of writing). 368 links above similarity 0.10, dominated by genuine project-name overlap (e.g. autogen issues against MAST's Magentic-One traces).
 4. A reproducible end-to-end pipeline that runs at ~$0.0002 per classification on DeepSeek V4-pro, with the whole 14K-issue backfill costing ~$3. The weekly cron extends the corpus to a new revision branch each Tuesday at 20:00 UTC.
 
@@ -80,7 +80,7 @@ The classifier component is deliberately swappable: the implementation is built 
 
 After classification, each issue is compared against records from any prior corpus that publishes a structured public dataset. At time of writing only **MAST** does so [`mcemri/MAST-Data` on Hugging Face Hub]; the other four prior corpora are paper-only and remain registered in `CORPORA` with `loader=None` placeholders. We expect this to change as datasheet expectations harden across the field.
 
-The matcher is TF-IDF + cosine similarity, computed over the union of ARC issue text and academic record text so the vocabulary is shared. The default threshold is 0.10. The choice was empirical — at 0.10 the corpus yields 368 links across 1,242 MAST traces and the 14,129 ARC issues, dominated by project-name overlap (10 of the top 15 highest-similarity matches are autogen issues mentioning `MultimodalWebSurfer` matching MAST traces from the Magentic-One project). Higher thresholds (0.15 → 15 links, 0.20 → 4 links) are publishable but mask the long tail of weaker-but-still-informative matches; downstream users can filter by `similarity` for tighter precision. We make no claim that TF-IDF is the optimal matcher; replacing it with sentence embeddings is a one-class change and will likely be a v0.2 enhancement.
+The matcher is TF-IDF + cosine similarity, computed over the union of ARC issue text and academic record text so the vocabulary is shared. The default threshold is 0.10. The choice was empirical — at 0.10 the corpus yields 368 links across 1,242 MAST traces and the v0 backfill's 14,129 ARC issues, dominated by project-name overlap (10 of the top 15 highest-similarity matches are autogen issues mentioning `MultimodalWebSurfer` matching MAST traces from the Magentic-One project). Higher thresholds (0.15 → 15 links, 0.20 → 4 links) are publishable but mask the long tail of weaker-but-still-informative matches; downstream users can filter by `similarity` for tighter precision. We make no claim that TF-IDF is the optimal matcher; replacing it with sentence embeddings is a one-class change and will likely be a v0.2 enhancement.
 
 ### 3.5 Curator agent
 
@@ -99,7 +99,7 @@ ARC labels every issue along four orthogonal axes:
 
 This is 28 labels in total. Each label carries a `derived_from` tuple naming which prior corpora the label traces back to (e.g. `derived_from = ("agent_error", "agentfail")`). The full table — 4 axes × labels × definitions × `derived_from` provenance — ships as the `taxonomy` config of the published dataset.
 
-The explicit `unknown` per axis is load-bearing: it lets the classifier admit when an issue is off-taxonomy (a feature request that slipped the prefilter, a discussion thread, an ambiguous bug report) without forcing a guess. Approximately 40% of issues have at least one `unknown` axis label, concentrated in `root_cause` (44%) and `symptom` (39%); these rows are usually flagged with `needs_review = true` and are the natural input to Curator drift audits.
+The explicit `unknown` per axis is load-bearing: it lets the classifier admit when an issue is off-taxonomy (a feature request that slipped the prefilter, a discussion thread, an ambiguous bug report) without forcing a guess. Approximately 20% of issues carry at least one `unknown` axis label — most often on `root_cause` (14%) and `phase` (13%); these rows are usually flagged with `needs_review = true` and are the natural input to Curator drift audits.
 
 ---
 
@@ -117,32 +117,35 @@ These are exactly the kind of cross-corpus links that the dataset is built to en
 
 ## 6. Empirical analysis and validation roadmap
 
-### 6.1 v0 corpus characteristics
+### 6.1 Corpus characteristics
 
-The 14,129 issues in the published v0 break down as follows:
+The corpus is continuously mined; the figures below are pinned to revision **`2026-W21`** — 14,487 issues, the 14,129-issue v0 backfill plus 358 added by subsequent weekly runs. The per-framework breakdown:
 
-| Framework | Issues | Note |
-|---|---|---|
-| autogpt | 1,500 | hit per-framework cap |
-| semantic_kernel | 1,499 | hit cap |
-| langchain | 1,499 | hit cap |
-| llamaindex | 1,498 | hit cap |
-| agno | 1,498 | hit cap |
-| mastra | 1,495 | hit cap |
-| autogen | 1,441 | hit cap (some prefilter drops) |
-| crewai | 1,229 | nearly full coverage |
-| langgraph | 1,050 | full coverage |
-| letta | 765 | full coverage |
-| smolagents | 628 | full coverage |
-| swarm | 27 | full coverage (archived repo) |
-| **Total** | **14,129** | |
+| Framework | Issues |
+|---|---|
+| mastra | 1,611 |
+| agno | 1,566 |
+| langchain | 1,541 |
+| llamaindex | 1,527 |
+| autogpt | 1,522 |
+| semantic_kernel | 1,500 |
+| autogen | 1,459 |
+| crewai | 1,253 |
+| langgraph | 1,072 |
+| letta | 768 |
+| smolagents | 637 |
+| swarm | 31 |
+| **Total** | **14,487** |
 
-Confidence distribution: mean **0.84**, median **0.85**, with **87%** of issues at high confidence (≥0.8) and only ~1% at low confidence (<0.5). 12% of issues are flagged `needs_review = true`, a function the Curator uses to sample drift-audit candidates.
+The backfill applied a 1,500-issue-per-framework cap; the seven largest repos hit it, so their counts reflect the most recent ~1,500 issues plus weekly additions rather than full history. The smaller frameworks — and swarm, an archived repo — have effectively complete coverage.
+
+Confidence distribution: mean **0.84**, median **0.85**, with **87%** of issues at high confidence (≥0.8) and **3%** at low confidence (<0.5). **12%** of issues are flagged `needs_review = true`, a function the Curator uses to sample drift-audit candidates.
 
 Per-axis label distribution (full counts in `issues.parquet`):
-- **Locus:** dominated by `framework` (67%), then `unknown` (22%), `platform` (8%), `agent` (5%).
-- **Symptom:** most common are `crash` (36%) and `wrong_output` (28%), with `unknown` at 23%.
-- **Root cause:** `api_misuse` (52%) is the dominant pattern — consistent with the Framework Bugs Study's findings on CrewAI and LangChain — followed by `unknown` (27%) and `api_incompatibility` (9%).
+- **Locus:** dominated by `framework` (76%), then `platform` (11%), `unknown` (6%), `agent` (4%), `model` (2%), `workflow` (1%).
+- **Phase:** `action` (54%) and `infra` (21%) lead, followed by `unknown` (13%), `memory` (7%), and `coordination` (3%).
+- **Symptom:** `crash` (49%) and `wrong_output` (28%) together account for over three-quarters of issues; `unknown` is 12% and `no_output` 7%.
+- **Root cause:** `api_misuse` (54%) is the dominant pattern — consistent with the Framework Bugs Study's findings on CrewAI and LangChain — followed by `unknown` (14%), `api_incompatibility` (14%), and `infrastructure` (7%).
 
 These distributions are descriptive, not prescriptive. We do not yet have the data to claim that, say, "62% of LangChain failures are root-caused in API misuse" — that would require a held-out gold standard.
 

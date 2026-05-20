@@ -2,10 +2,11 @@ name: weekly-pipeline
 
 on:
   schedule:
-    # Tuesdays 20:00 UTC (22:00 CEST). Evening-of-author timezone so a
-    # human is awake when the run lands and can react to any failure
-    # before the next-day workflow window.
-    - cron: "0 20 * * 2"
+    # Sundays 07:00 UTC — runs over the weekend so the snapshot is ready
+    # before Monday morning in every timezone (Tokyo Sun 16:00, Berlin Sun
+    # 08:00, NYC Sun 02:00). Monday 07:00 UTC would land mid-workday in
+    # East Asia, where data is most likely to be consumed first thing.
+    - cron: "0 7 * * 0"
   workflow_dispatch:
     inputs:
       max_per_framework:
