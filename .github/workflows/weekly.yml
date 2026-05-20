@@ -25,7 +25,13 @@ jobs:
   run:
     name: scrape-classify-publish
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 360 = GitHub's hard ceiling for a single job. Generous on purpose:
+    # the pipeline saves scrape state only on a full successful run, so a
+    # timeout loses all progress and the next run re-scrapes a bigger
+    # back-window. Steady-state weekly runs finish in ~1h; the headroom
+    # is there to drain an accumulated backlog without re-entering that
+    # cycle.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
         with:
