@@ -77,6 +77,10 @@ jobs:
           git add -f data/pipeline_state.json
           if ! git diff --cached --quiet; then
             git commit -m "chore: update pipeline state ($(date -u +%Y-%m-%d))"
+            # A commit may have landed on main during the ~20min run; rebase
+            # our one-file state commit onto it before pushing, else the
+            # push is rejected as non-fast-forward.
+            git pull --rebase origin main
             git push
           else
             echo "no state changes to commit"
