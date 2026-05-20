@@ -51,15 +51,22 @@ def _find_state_files(shards_dir: Path) -> list[Path]:
     return sorted(shards_dir.rglob("pipeline_state.json"))
 
 
-def merge_state_files(state_files: list[Path]) -> dict[str, str]:
+def merge_state_files(
+    state_files: list[Path], base: dict[str, str] | None = None
+) -> dict[str, str]:
     """Union the `last_scraped_at` maps from every shard.
 
     Each shard touches only its own framework's key, so a plain dict union
     is the right merge operation. If two shards somehow disagree on the
     same key (shouldn't happen), the lexically-later file wins — sorted
     iteration makes that deterministic.
+
+    `base` seeds the result with the existing committed state. A framework
+    whose matrix job failed produces no shard; without the seed it would
+    silently drop out of the merged state and get re-scraped from scratch
+    next run. Seeding preserves its prior cursor.
     """
-    merged: dict[str, str] = {}
+    merged: dict[str, str] = dict(base) if base else {}
     for path in state_files:
         try:
             payload = json.loads(path.read_text())
@@ -111,9 +118,15 @@ def merge_shards(
     taxonomy_to_df().write_parquet(snapshot_dir / "taxonomy.parquet")
     cross_links_to_df([]).write_parquet(snapshot_dir / "cross_links.parquet")
 
-    # 3. Optionally union per-shard state files.
+    # 3. Optionally union per-shard state files onto the existing state.
     if state_path is not None:
-        merged_state = merge_state_files(_find_state_files(shards_dir))
+        base_state: dict[str, str] = {}
+        if state_path.exists():
+            try:
+                base_state = json.loads(state_path.read_text()).get("last_scraped_at", {})
+            except (OSError, json.JSONDecodeError) as exc:
+                log.warning("merge.skip_bad_base_state", path=str(state_path), error=str(exc))
+        merged_state = merge_state_files(_find_state_files(shards_dir), base=base_state)
         state_path.parent.mkdir(parents=True, exist_ok=True)
         state_path.write_text(
             json.dumps({"last_scraped_at": merged_state}, indent=2, sort_keys=True)

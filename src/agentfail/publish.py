@@ -198,6 +198,58 @@ def write_local_snapshot(
     return snapshot_dir
 
 
+# --- Cumulative corpus merge ---------------------------------------------
+
+
+def load_existing_issues(repo_id: str, token: str) -> pl.DataFrame | None:
+    """Load the current `issues` config from the Hub's `main` branch.
+
+    Returns None if the repo, the config, or its parquet files don't exist
+    yet (first-ever push). Concatenates across shards if the config spans
+    multiple parquet files.
+    """
+    from huggingface_hub import HfApi, hf_hub_download
+
+    api = HfApi(token=token)
+    try:
+        info = api.dataset_info(repo_id)
+    except Exception as exc:  # noqa: BLE001 — repo may not exist yet
+        log.info("publish.no_existing_repo", repo_id=repo_id, error=str(exc))
+        return None
+
+    parquets = sorted(
+        s.rfilename
+        for s in (info.siblings or [])
+        if s.rfilename.startswith("issues/") and s.rfilename.endswith(".parquet")
+    )
+    if not parquets:
+        log.info("publish.no_existing_issues", repo_id=repo_id)
+        return None
+
+    dfs = [
+        pl.read_parquet(hf_hub_download(repo_id, fn, repo_type="dataset", token=token))
+        for fn in parquets
+    ]
+    return pl.concat(dfs, how="vertical_relaxed")
+
+
+def merge_issues_cumulative(new_df: pl.DataFrame, existing_df: pl.DataFrame | None) -> pl.DataFrame:
+    """Union new classified issues onto the existing corpus.
+
+    The corpus is cumulative: a weekly run scrapes only issues updated
+    since its cursor, so its output must be *added* to the corpus, never
+    substituted for it. On a `node_id` collision (an issue re-scraped
+    because it was updated) the row with the later `classified_at` wins —
+    the fresher classification reflects the issue's current state.
+    """
+    if existing_df is None or existing_df.height == 0:
+        return new_df
+    combined = pl.concat([existing_df, new_df], how="vertical_relaxed")
+    return combined.sort("classified_at", descending=True, nulls_last=True).unique(
+        subset="node_id", keep="first", maintain_order=True
+    )
+
+
 # --- HF Hub push ---------------------------------------------------------
 
 
@@ -209,6 +261,7 @@ def push_to_hub(
     revision: str | None = None,
     private: bool = False,
     also_push_to_main: bool = True,
+    cumulative: bool = True,
 ) -> None:
     """Push every config under snapshot_dir to the HF Hub as a multi-config
     dataset. Each config becomes a loadable config_name on the dataset page.
@@ -222,6 +275,13 @@ def push_to_hub(
 
     Set `also_push_to_main=False` to skip step 2 (e.g. for ad-hoc back-fills
     that shouldn't displace the current latest).
+
+    `cumulative` (default True): the `issues` config is unioned onto the
+    corpus already on the Hub before pushing — `Dataset.push_to_hub`
+    *replaces* a config's files rather than appending, so a non-cumulative
+    push of an incremental weekly scrape would clobber the whole corpus
+    down to that one run's output. The static configs (taxonomy,
+    frameworks, cross_links) are regenerated each run and replace cleanly.
 
     Requires `HF_TOKEN` (or the `hf_token` argument). No-op if the snapshot
     directory contains no parquet files.
@@ -245,14 +305,29 @@ def push_to_hub(
         if not parquet_path.exists():
             log.warning("publish.missing_config", config=config_name, path=str(parquet_path))
             continue
-        # Construct via pyarrow.Table rather than Dataset.from_parquet:
-        # the latter routes through ParquetBuilder, which raises
-        # `Instruction "train" corresponds to no data!` on 0-row files
-        # (cross_links is intentionally empty in v0). Building from an
-        # arrow Table preserves the schema and handles empty configs
-        # without complaint.
-        table = pq.read_table(str(parquet_path))
-        ds = Dataset(table)
+        if config_name == "issues" and cumulative:
+            # Union this run's issues onto the corpus already on the Hub.
+            # Without this, push_to_hub's replace semantics would shrink
+            # the corpus to just this run's incremental scrape.
+            new_df = pl.read_parquet(parquet_path)
+            existing_df = load_existing_issues(repo_id, token)
+            merged = merge_issues_cumulative(new_df, existing_df)
+            log.info(
+                "publish.issues_merged",
+                new_rows=new_df.height,
+                existing_rows=0 if existing_df is None else existing_df.height,
+                merged_rows=merged.height,
+            )
+            ds = Dataset(merged.to_arrow())
+        else:
+            # Construct via pyarrow.Table rather than Dataset.from_parquet:
+            # the latter routes through ParquetBuilder, which raises
+            # `Instruction "train" corresponds to no data!` on 0-row files
+            # (cross_links is intentionally empty in v0). Building from an
+            # arrow Table preserves the schema and handles empty configs
+            # without complaint.
+            table = pq.read_table(str(parquet_path))
+            ds = Dataset(table)
 
         # 1. Revisioned push (citable, never overwritten).
         ds.push_to_hub(

@@ -116,6 +116,20 @@ def test_merge_state_files_handles_missing_or_bad_files(tmp_path: Path) -> None:
     assert merged == {"a": "2026-04-23T10:00:00+00:00"}
 
 
+def test_merge_state_files_preserves_base_for_missing_shards(tmp_path: Path) -> None:
+    """A framework whose matrix job failed produces no shard. Its cursor
+    must survive from the base state, not silently reset to a re-scrape."""
+    shard = tmp_path / "langchain.json"
+    shard.write_text(json.dumps({"last_scraped_at": {"langchain": "2026-05-10T00:00:00+00:00"}}))
+    base = {
+        "langchain": "2026-04-01T00:00:00+00:00",  # overwritten by the shard
+        "crewai": "2026-04-15T00:00:00+00:00",  # no shard — must be kept
+    }
+    merged = merge_state_files([shard], base=base)
+    assert merged["langchain"] == "2026-05-10T00:00:00+00:00"
+    assert merged["crewai"] == "2026-04-15T00:00:00+00:00"
+
+
 def test_merge_rejects_inconsistent_revisions(tmp_path: Path) -> None:
     shards_dir = tmp_path / "shards"
     # Hand-roll two shards with conflicting revision dirs.
