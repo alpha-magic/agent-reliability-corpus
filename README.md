@@ -96,9 +96,9 @@ of every prompt and is byte-identical across calls; DeepSeek's automatic
 prefix cache discounts it by ~50× on hit.
 
 Estimated cost: well under $1 per 1,000 classified issues with cache-warm
-runs. The pipeline uses the OpenAI SDK with a custom `base_url`, so
-swapping in any other OpenAI-compatible backend (Mistral, Together,
-OpenRouter, a local vLLM server, etc.) is a one-line change.
+runs. The classifier is built on Pydantic AI's per-provider model classes,
+so swapping in another backend (Mistral, Together, OpenRouter, a local
+vLLM server, any OpenAI-compatible endpoint) is a one-line change.
 
 ## Unified taxonomy
 
